@@ -30,6 +30,11 @@ interface CreateGithubRequest {
     supabaseProjectId: string;
     elevenlabsAgentId: string;
   };
+  logoData?: {
+    logoBase64: string | null;    // Base64 encoded logo
+    logoType: string | null;      // 'svg', 'png', 'jpg', etc.
+    ogImageBase64: string | null; // Base64 encoded OG image
+  };
   skipConfigUpdate?: boolean;  // Create repo only, don't push config
   pushConfigOnly?: boolean;    // Skip repo creation, just push config
 }
@@ -37,7 +42,7 @@ interface CreateGithubRequest {
 export async function POST(req: NextRequest) {
   try {
     const body: CreateGithubRequest = await req.json();
-    const { repoName, formData, createdResources, skipConfigUpdate, pushConfigOnly } = body;
+    const { repoName, formData, createdResources, logoData, skipConfigUpdate, pushConfigOnly } = body;
 
     if (!repoName) {
       return NextResponse.json({ error: 'Repository name required' }, { status: 400 });
@@ -174,12 +179,108 @@ export async function POST(req: NextRequest) {
       console.warn('Could not update config file - manual push may be needed');
     }
 
+    // Step 4: Push logo files if provided
+    let logoUpdated = false;
+    if (logoData?.logoBase64) {
+      console.log('Pushing logo files...');
+
+      try {
+        // Extract the actual base64 data (remove data:image/xxx;base64, prefix)
+        const logoBase64Clean = logoData.logoBase64.replace(/^data:image\/\w+;base64,/, '');
+
+        // Determine file extension
+        const logoExt = logoData.logoType === 'svg' ? 'svg' : 'png';
+        const logoPath = `public/images/logo.${logoExt}`;
+
+        // Try to get existing file SHA
+        const getLogoResponse = await fetch(
+          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`,
+          { headers }
+        );
+
+        const logoPayload: any = {
+          message: `Add ${formData.companyName} logo`,
+          content: logoBase64Clean,
+        };
+
+        if (getLogoResponse.ok) {
+          const existingFile = await getLogoResponse.json();
+          logoPayload.sha = existingFile.sha;
+        }
+
+        const pushLogoResponse = await fetch(
+          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`,
+          {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(logoPayload),
+          }
+        );
+
+        if (pushLogoResponse.ok) {
+          console.log(`Logo pushed to ${logoPath}`);
+          logoUpdated = true;
+        } else {
+          console.warn('Failed to push logo:', await pushLogoResponse.text());
+        }
+      } catch (err) {
+        console.warn('Logo push error:', err);
+      }
+    }
+
+    // Step 5: Push OG image if provided
+    let ogImageUpdated = false;
+    if (logoData?.ogImageBase64) {
+      console.log('Pushing OG image...');
+
+      try {
+        const ogBase64Clean = logoData.ogImageBase64.replace(/^data:image\/\w+;base64,/, '');
+        const ogPath = 'public/images/og-image.png';
+
+        // Try to get existing file SHA
+        const getOgResponse = await fetch(
+          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`,
+          { headers }
+        );
+
+        const ogPayload: any = {
+          message: `Add ${formData.companyName} OG image`,
+          content: ogBase64Clean,
+        };
+
+        if (getOgResponse.ok) {
+          const existingFile = await getOgResponse.json();
+          ogPayload.sha = existingFile.sha;
+        }
+
+        const pushOgResponse = await fetch(
+          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`,
+          {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify(ogPayload),
+          }
+        );
+
+        if (pushOgResponse.ok) {
+          console.log('OG image pushed');
+          ogImageUpdated = true;
+        } else {
+          console.warn('Failed to push OG image:', await pushOgResponse.text());
+        }
+      } catch (err) {
+        console.warn('OG image push error:', err);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       repoUrl,
       repoFullName,
       cloneUrl: `https://github.com/${owner}/${repoName}.git`,
       configUpdated: fileUpdated,
+      logoUpdated,
+      ogImageUpdated,
       phase: pushConfigOnly ? 'config-pushed' : 'complete',
     });
 

@@ -162,17 +162,64 @@ export default function SetupWizard() {
       return; // Stop if Supabase fails
     }
 
-    // Step 2: Extract
-    setCreationStatus(prev => ({ ...prev, extraction: 'creating' }));
+    // Step 1b: Create admin user in client's Supabase
+    const tempPassword = `${formData.companyName.replace(/\s+/g, '')}2024!`;
+    console.log('Creating admin user...');
     try {
-      const res = await fetch('/api/setup/extract-styles', {
+      const res = await fetch('/api/setup/create-admin-user', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabaseUrl,
+          supabaseServiceKey,
+          adminEmail: formData.adminEmail,
+          adminFirstName: formData.adminFirstName,
+          adminLastName: formData.adminLastName,
+          companyName: formData.companyName,
+          tempPassword,
+        }),
+      });
+      if (res.ok) {
+        console.log('Admin user created');
+      } else {
+        console.warn('Admin user creation failed - they can sign up manually');
+      }
+    } catch (err) { console.warn('Admin user creation error:', err); }
+
+    // Step 2: Extract branding and logo
+    setCreationStatus(prev => ({ ...prev, extraction: 'creating' }));
+    let logoData: { logoBase64: string | null; logoType: string | null; ogImageBase64: string | null } = {
+      logoBase64: null,
+      logoType: null,
+      ogImageBase64: null,
+    };
+    try {
+      // Extract colors/thesis
+      const stylesRes = await fetch('/api/setup/extract-styles', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ websiteUrl: formData.companyWebsite }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      if (stylesRes.ok) {
+        const data = await stylesRes.json();
         setFormData(prev => ({ ...prev, extractedColors: data.theme?.colors || prev.extractedColors }));
       }
+
+      // Extract logo
+      const logoRes = await fetch('/api/setup/extract-logo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ websiteUrl: formData.companyWebsite }),
+      });
+      if (logoRes.ok) {
+        const data = await logoRes.json();
+        if (data.logoBase64) {
+          logoData = {
+            logoBase64: data.logoBase64,
+            logoType: data.logoType,
+            ogImageBase64: data.ogImageBase64,
+          };
+          console.log('Logo extracted:', data.source);
+        }
+      }
+
       setCreationStatus(prev => ({ ...prev, extraction: 'done' }));
     } catch { setCreationStatus(prev => ({ ...prev, extraction: 'done' })); }
 
@@ -315,8 +362,8 @@ export default function SetupWizard() {
       console.log('Supabase Auth configured');
     } catch (err) { console.warn('Supabase Auth config failed:', err); }
 
-    // Step 7: Push config to GitHub - This triggers Vercel auto-deploy
-    console.log('Pushing config to trigger deployment...');
+    // Step 7: Push config and logo to GitHub - This triggers Vercel auto-deploy
+    console.log('Pushing config and logo to trigger deployment...');
     try {
       await fetch('/api/setup/create-github', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -330,6 +377,7 @@ export default function SetupWizard() {
             supabaseServiceKey,
             elevenlabsAgentId,
           },
+          logoData, // Include extracted logo
           pushConfigOnly: true, // Repo exists, just push config update
         }),
       });
@@ -347,7 +395,7 @@ export default function SetupWizard() {
           adminLastName: formData.adminLastName,
           companyName: formData.companyName,
           platformUrl: vercelUrl,
-          tempPassword: `${formData.companyName.replace(/\s+/g, '')}2024!`,
+          tempPassword, // Use the same password we created the user with
         }),
       });
       if (emailRes.ok) {

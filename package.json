@@ -42,6 +42,7 @@
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.81.1",
     "ai": "^4.0.38",
+    "cheerio": "^1.1.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -58,6 +59,7 @@
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "@types/cheerio": "^0.22.35",
     "@types/node": "^22.9.0",
     "@types/pdf-parse": "^1.1.4",
     "@types/react": "^18.3.12",
@@ -77,4 +79,3 @@
     "npm": ">=10.0.0"
   }
 }
-
