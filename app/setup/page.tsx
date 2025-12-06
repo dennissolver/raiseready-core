@@ -224,6 +224,7 @@ export default function SetupWizard() {
 
     // Step 5: Vercel - Create project linked to GitHub repo
     setCreationStatus(prev => ({ ...prev, vercel: 'creating' }));
+    let vercelUrl = `https://${projectSlug}.vercel.app`;
     try {
       const res = await fetch('/api/setup/create-vercel', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -240,12 +241,26 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
+        vercelUrl = data.url || vercelUrl;
         setCreatedResources(prev => ({ ...prev, vercelUrl: data.url, vercelProjectId: data.projectId }));
         setCreationStatus(prev => ({ ...prev, vercel: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, vercel: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, vercel: 'error' })); }
 
-    // Step 6: Push config to GitHub - This triggers Vercel auto-deploy
+    // Step 6: Configure Supabase Auth with Vercel URL
+    console.log('Configuring Supabase Auth URLs...');
+    try {
+      await fetch('/api/setup/configure-supabase-auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectRef: supabaseProjectId,
+          siteUrl: vercelUrl,
+        }),
+      });
+      console.log('Supabase Auth configured');
+    } catch (err) { console.warn('Supabase Auth config failed:', err); }
+
+    // Step 7: Push config to GitHub - This triggers Vercel auto-deploy
     console.log('Pushing config to trigger deployment...');
     try {
       await fetch('/api/setup/create-github', {
