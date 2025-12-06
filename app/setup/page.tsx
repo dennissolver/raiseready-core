@@ -162,7 +162,24 @@ export default function SetupWizard() {
       return; // Stop if Supabase fails
     }
 
-    // Step 1b: Create admin user in client's Supabase
+    // Step 1b: Run base schema migration on client's Supabase
+    console.log('Running database migrations...');
+    try {
+      const res = await fetch('/api/setup/run-migration', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabaseUrl,
+          supabaseServiceKey,
+        }),
+      });
+      if (res.ok) {
+        console.log('Database schema created');
+      } else {
+        console.warn('Migration warning - tables may need manual setup');
+      }
+    } catch (err) { console.warn('Migration error:', err); }
+
+    // Step 1c: Create admin user in client's Supabase
     const tempPassword = `${formData.companyName.replace(/\s+/g, '')}2024!`;
     console.log('Creating admin user...');
     try {
