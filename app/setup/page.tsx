@@ -127,6 +127,7 @@ export default function SetupWizard() {
     let supabaseUrl = '';
     let supabaseAnonKey = '';
     let supabaseServiceKey = '';
+    let supabaseProjectId = '';
 
     // Step 1: Supabase
     setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
@@ -141,6 +142,7 @@ export default function SetupWizard() {
         supabaseUrl = data.url;
         supabaseAnonKey = data.anonKey;
         supabaseServiceKey = data.serviceKey;
+        supabaseProjectId = data.projectId;
 
         setCreatedResources(prev => ({
           ...prev,
@@ -197,7 +199,18 @@ export default function SetupWizard() {
     try {
       const res = await fetch('/api/setup/create-github', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoName: projectSlug, formData, createdResources }),
+        // FIX: Pass local variables instead of stale state
+        body: JSON.stringify({
+          repoName: projectSlug,
+          formData,
+          createdResources: {
+            supabaseUrl,
+            supabaseProjectId,
+            supabaseAnonKey,
+            supabaseServiceKey,
+            elevenlabsAgentId,
+          }
+        }),
       });
       if (res.ok) {
         const data = await res.json();
