@@ -229,55 +229,68 @@ ALTER TABLE discovery_responses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE voice_sessions ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for profiles
-CREATE POLICY IF NOT EXISTS "Users can view own profile" ON profiles
+DROP POLICY IF EXISTS "Users can view own profile" ON profiles;
+CREATE POLICY "Users can view own profile" ON profiles
   FOR SELECT USING (auth.uid() = id);
 
-CREATE POLICY IF NOT EXISTS "Users can update own profile" ON profiles
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
+CREATE POLICY "Users can update own profile" ON profiles
   FOR UPDATE USING (auth.uid() = id);
 
-CREATE POLICY IF NOT EXISTS "Admins can view all profiles" ON profiles
+DROP POLICY IF EXISTS "Admins can view all profiles" ON profiles;
+CREATE POLICY "Admins can view all profiles" ON profiles
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_admin = true)
   );
 
 -- RLS Policies for founders
-CREATE POLICY IF NOT EXISTS "Founders can view own data" ON founders
+DROP POLICY IF EXISTS "Founders can view own data" ON founders;
+CREATE POLICY "Founders can view own data" ON founders
   FOR SELECT USING (user_id = auth.uid());
 
-CREATE POLICY IF NOT EXISTS "Founders can update own data" ON founders
+DROP POLICY IF EXISTS "Founders can update own data" ON founders;
+CREATE POLICY "Founders can update own data" ON founders
   FOR UPDATE USING (user_id = auth.uid());
 
-CREATE POLICY IF NOT EXISTS "Founders can insert own data" ON founders
+DROP POLICY IF EXISTS "Founders can insert own data" ON founders;
+CREATE POLICY "Founders can insert own data" ON founders
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
-CREATE POLICY IF NOT EXISTS "Investors can view founders" ON founders
+DROP POLICY IF EXISTS "Investors can view founders" ON founders;
+CREATE POLICY "Investors can view founders" ON founders
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type = 'investor')
   );
 
 -- RLS Policies for pitch_decks
-CREATE POLICY IF NOT EXISTS "Users can manage own decks" ON pitch_decks
+DROP POLICY IF EXISTS "Users can manage own decks" ON pitch_decks;
+CREATE POLICY "Users can manage own decks" ON pitch_decks
   FOR ALL USING (user_id = auth.uid());
 
-CREATE POLICY IF NOT EXISTS "Investors can view decks" ON pitch_decks
+DROP POLICY IF EXISTS "Investors can view decks" ON pitch_decks;
+CREATE POLICY "Investors can view decks" ON pitch_decks
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type = 'investor')
   );
 
 -- RLS Policies for coaching_sessions
-CREATE POLICY IF NOT EXISTS "Users can manage own sessions" ON coaching_sessions
+DROP POLICY IF EXISTS "Users can manage own sessions" ON coaching_sessions;
+CREATE POLICY "Users can manage own sessions" ON coaching_sessions
   FOR ALL USING (user_id = auth.uid());
 
 -- RLS Policies for watchlist
-CREATE POLICY IF NOT EXISTS "Investors can manage own watchlist" ON watchlist
+DROP POLICY IF EXISTS "Investors can manage own watchlist" ON watchlist;
+CREATE POLICY "Investors can manage own watchlist" ON watchlist
   FOR ALL USING (investor_id = auth.uid());
 
 -- RLS Policies for discovery_responses
-CREATE POLICY IF NOT EXISTS "Users can manage own responses" ON discovery_responses
+DROP POLICY IF EXISTS "Users can manage own responses" ON discovery_responses;
+CREATE POLICY "Users can manage own responses" ON discovery_responses
   FOR ALL USING (user_id = auth.uid());
 
 -- RLS Policies for voice_sessions
-CREATE POLICY IF NOT EXISTS "Users can manage own voice sessions" ON voice_sessions
+DROP POLICY IF EXISTS "Users can manage own voice sessions" ON voice_sessions;
+CREATE POLICY "Users can manage own voice sessions" ON voice_sessions
   FOR ALL USING (user_id = auth.uid());
 
 -- Function to handle new user signup
