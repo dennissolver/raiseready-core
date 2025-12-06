@@ -24,7 +24,14 @@ export async function POST(req: NextRequest) {
 
     console.log(`Configuring Auth for project ${projectRef} with site URL: ${siteUrl}`);
 
-    // Update Auth configuration
+    // Build redirect URLs list (comma-separated string, not array)
+    const redirectUrls = [
+      `${siteUrl}/**`,
+      `${siteUrl}/callback`,
+      `${siteUrl}/auth/callback`,
+    ].join(',');
+
+    // Update Auth configuration using correct Management API field names
     const authConfigResponse = await fetch(
       `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/config/auth`,
       {
@@ -35,17 +42,7 @@ export async function POST(req: NextRequest) {
         },
         body: JSON.stringify({
           site_url: siteUrl,
-          uri_allow_list: [
-            `${siteUrl}/**`,
-            `${siteUrl}/callback`,
-            `${siteUrl}/callback/**`,
-            `${siteUrl}/auth/callback`,
-            `${siteUrl}/auth/callback/**`,
-          ],
-          // Enable email confirmations to redirect properly
-          mailer_autoconfirm: false,
-          // Redirect URLs for password reset, magic link, etc.
-          external_email_enabled: true,
+          additional_redirect_urls: redirectUrls,
         }),
       }
     );
@@ -54,12 +51,60 @@ export async function POST(req: NextRequest) {
       const error = await authConfigResponse.text();
       console.error('Failed to configure Auth:', error);
 
-      // Don't fail the whole flow - just warn
-      return NextResponse.json({
-        success: false,
-        warning: `Auth config update failed: ${error}`,
-        message: 'You may need to manually set Site URL in Supabase dashboard',
-      });
+      // Try alternate field name if first attempt fails
+      console.log('Trying alternate field names...');
+      const retryResponse = await fetch(
+        `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/config/auth`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            site_url: siteUrl,
+            uri_allow_list: redirectUrls,
+          }),
+        }
+      );
+
+      if (!retryResponse.ok) {
+        const retryError = await retryResponse.text();
+        console.error('Retry also failed:', retryError);
+
+        // Just try to set site_url alone
+        console.log('Trying site_url only...');
+        const siteOnlyResponse = await fetch(
+          `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/config/auth`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              site_url: siteUrl,
+            }),
+          }
+        );
+
+        if (siteOnlyResponse.ok) {
+          console.log('Site URL configured, but redirect URLs need manual setup');
+          return NextResponse.json({
+            success: true,
+            partial: true,
+            projectRef,
+            siteUrl,
+            message: 'Site URL set. Add redirect URLs manually in Supabase dashboard.',
+          });
+        }
+
+        return NextResponse.json({
+          success: false,
+          warning: `Auth config update failed: ${retryError}`,
+          message: 'You may need to manually set Site URL in Supabase dashboard',
+        });
+      }
     }
 
     console.log('Auth configuration updated successfully');
@@ -68,10 +113,7 @@ export async function POST(req: NextRequest) {
       success: true,
       projectRef,
       siteUrl,
-      redirectUrls: [
-        `${siteUrl}/**`,
-        `${siteUrl}/auth/callback`,
-      ],
+      redirectUrls: redirectUrls.split(','),
     });
 
   } catch (error) {
