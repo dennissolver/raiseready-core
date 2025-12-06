@@ -5,8 +5,8 @@ const VERCEL_API = 'https://api.vercel.com';
 interface CreateVercelRequest {
   projectName: string;
   githubRepo: string;
-  envVars: {
-    NEXT_PUBLIC_SUPABASE_URL: string;
+  envVars?: {
+    NEXT_PUBLIC_SUPABASE_URL?: string;
     NEXT_PUBLIC_SUPABASE_ANON_KEY?: string;
     SUPABASE_SERVICE_ROLE_KEY?: string;
     NEXT_PUBLIC_ELEVENLABS_AGENT_ID?: string;
@@ -15,11 +15,19 @@ interface CreateVercelRequest {
 
 export async function POST(req: NextRequest) {
   try {
-    const body: CreateVercelRequest = await req.json();
-    const { projectName, githubRepo, envVars } = body;
+    const body = await req.json();
+    console.log('Received body:', JSON.stringify(body, null, 2));
+    
+    const { projectName, githubRepo, envVars } = body as CreateVercelRequest;
 
-    if (!projectName || !githubRepo) {
-      return NextResponse.json({ error: 'Project name and GitHub repo required' }, { status: 400 });
+    if (!projectName) {
+      console.error('Missing projectName');
+      return NextResponse.json({ error: 'Project name required', received: body }, { status: 400 });
+    }
+    
+    if (!githubRepo) {
+      console.error('Missing githubRepo');
+      return NextResponse.json({ error: 'GitHub repo required', received: body }, { status: 400 });
     }
 
     const token = process.env.VERCEL_TOKEN;
@@ -58,9 +66,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Step 2: Create the project
-    console.log(`Creating Vercel project: ${projectName}`);
+    console.log(`Creating Vercel project: ${projectName} linked to ${githubRepo}`);
 
-    const createBody: any = {
+    const createBody = {
       name: projectName,
       framework: 'nextjs',
       gitRepository: {
@@ -96,7 +104,7 @@ export async function POST(req: NextRequest) {
 
     // Step 3: Set environment variables
     const allEnvVars = {
-      ...envVars,
+      ...(envVars || {}),
       IS_ADMIN_PLATFORM: 'false',
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       OPENAI_API_KEY: process.env.OPENAI_API_KEY,
