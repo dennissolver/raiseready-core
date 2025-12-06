@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { 
+import {
   Building2, User, Globe, Mic, Brain, CheckCircle, Loader2,
   ArrowRight, ArrowLeft, Sparkles, Database, Rocket
 } from 'lucide-react';
@@ -45,7 +45,7 @@ export default function SetupWizard() {
   const [step, setStep] = useState<Step>('company');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   const [formData, setFormData] = useState<FormData>({
     companyName: '', companyWebsite: '', companyPhone: '', companyEmail: '',
     adminFirstName: '', adminLastName: '', adminEmail: '', adminPhone: '',
@@ -59,9 +59,17 @@ export default function SetupWizard() {
     extraction: 'pending', github: 'pending', deployment: 'pending',
   });
 
+  // FIX 1: Added supabaseAnonKey and supabaseServiceKey to track credentials
   const [createdResources, setCreatedResources] = useState({
-    supabaseUrl: '', supabaseProjectId: '', vercelUrl: '',
-    vercelProjectId: '', elevenlabsAgentId: '', githubRepo: '', githubUrl: '',
+    supabaseUrl: '',
+    supabaseProjectId: '',
+    supabaseAnonKey: '',      // ← ADDED
+    supabaseServiceKey: '',   // ← ADDED
+    vercelUrl: '',
+    vercelProjectId: '',
+    elevenlabsAgentId: '',
+    githubRepo: '',
+    githubUrl: '',
   });
 
   const updateForm = (field: keyof FormData, value: any) => {
@@ -115,6 +123,11 @@ export default function SetupWizard() {
     setStep('creating');
     const projectSlug = formData.companyName.toLowerCase().replace(/\s+/g, '-') + '-pitch';
 
+    // FIX 2: Use local variables to track Supabase credentials through the async flow
+    let supabaseUrl = '';
+    let supabaseAnonKey = '';
+    let supabaseServiceKey = '';
+
     // Step 1: Supabase
     setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
     try {
@@ -124,10 +137,27 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCreatedResources(prev => ({ ...prev, supabaseUrl: data.url, supabaseProjectId: data.projectId }));
+        // FIX 3: Capture ALL credentials from Supabase response
+        supabaseUrl = data.url;
+        supabaseAnonKey = data.anonKey;
+        supabaseServiceKey = data.serviceKey;
+
+        setCreatedResources(prev => ({
+          ...prev,
+          supabaseUrl: data.url,
+          supabaseProjectId: data.projectId,
+          supabaseAnonKey: data.anonKey,        // ← ADDED
+          supabaseServiceKey: data.serviceKey,  // ← ADDED
+        }));
         setCreationStatus(prev => ({ ...prev, supabase: 'done' }));
-      } else { setCreationStatus(prev => ({ ...prev, supabase: 'error' })); }
-    } catch { setCreationStatus(prev => ({ ...prev, supabase: 'error' })); }
+      } else {
+        setCreationStatus(prev => ({ ...prev, supabase: 'error' }));
+        return; // Stop if Supabase fails - we need these credentials
+      }
+    } catch {
+      setCreationStatus(prev => ({ ...prev, supabase: 'error' }));
+      return; // Stop if Supabase fails
+    }
 
     // Step 2: Extract
     setCreationStatus(prev => ({ ...prev, extraction: 'creating' }));
@@ -144,6 +174,7 @@ export default function SetupWizard() {
     } catch { setCreationStatus(prev => ({ ...prev, extraction: 'done' })); }
 
     // Step 3: ElevenLabs
+    let elevenlabsAgentId = '';
     setCreationStatus(prev => ({ ...prev, elevenlabs: 'creating' }));
     try {
       const res = await fetch('/api/setup/create-elevenlabs', {
@@ -153,6 +184,7 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
+        elevenlabsAgentId = data.agentId;
         setCreatedResources(prev => ({ ...prev, elevenlabsAgentId: data.agentId }));
         setCreationStatus(prev => ({ ...prev, elevenlabs: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, elevenlabs: 'error' })); }
@@ -181,8 +213,17 @@ export default function SetupWizard() {
     try {
       const res = await fetch('/api/setup/create-vercel', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: projectSlug, githubRepo: githubRepoFullName,
-          envVars: { NEXT_PUBLIC_SUPABASE_URL: createdResources.supabaseUrl } }),
+        body: JSON.stringify({
+          projectName: projectSlug,
+          githubRepo: githubRepoFullName,
+          // FIX 4: Pass ALL Supabase credentials to Vercel
+          envVars: {
+            NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,      // ← ADDED
+            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,       // ← ADDED
+            NEXT_PUBLIC_ELEVENLABS_AGENT_ID: elevenlabsAgentId,  // ← ADDED (bonus)
+          }
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -222,36 +263,36 @@ export default function SetupWizard() {
     { key: 'review', label: 'Review', icon: CheckCircle },
   ];
 
+  const currentStepIdx = stepsList.findIndex(s => s.key === step);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white py-8 px-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen bg-slate-950 text-white">
+      <div className="max-w-4xl mx-auto p-8">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">RaiseReady White Label Setup</h1>
-          <p className="text-gray-400">Create a new client platform in minutes</p>
+          <h1 className="text-3xl font-bold mb-2">RaiseReady White-Label Setup</h1>
+          <p className="text-gray-400">Create a new client pitch coaching platform</p>
         </div>
 
         {step !== 'creating' && (
           <div className="flex justify-center mb-8">
-            <div className="flex items-center gap-2">
-              {stepsList.map((s, i) => {
-                const Icon = s.icon;
-                const isActive = step === s.key;
-                const isPast = stepsList.findIndex(x => x.key === step) > i;
-                return (
-                  <div key={s.key} className="flex items-center">
-                    <div className={"flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all " + getStepClass(isActive, isPast)}>
-                      {isPast ? <CheckCircle className="w-5 h-5" /> : <Icon className="w-5 h-5" />}
-                    </div>
-                    <span className={"ml-2 text-sm hidden sm:block " + (isActive ? 'text-white' : 'text-gray-400')}>{s.label}</span>
-                    {i < stepsList.length - 1 && <div className={"w-8 h-0.5 mx-2 " + (isPast ? 'bg-green-500' : 'bg-gray-600')} />}
+            {stepsList.map((s, idx) => {
+              const Icon = s.icon;
+              const isActive = s.key === step;
+              const isPast = idx < currentStepIdx;
+              return (
+                <div key={s.key} className="flex items-center">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${getStepClass(isActive, isPast)}`}>
+                    {isPast ? <CheckCircle className="w-5 h-5" /> : <Icon className="w-5 h-5" />}
                   </div>
-                );
-              })}
-            </div>
+                  <span className={`ml-2 text-sm hidden md:inline ${isActive ? 'text-white' : 'text-gray-500'}`}>{s.label}</span>
+                  {idx < stepsList.length - 1 && <div className={`w-12 h-0.5 mx-2 ${isPast ? 'bg-green-500' : 'bg-gray-700'}`} />}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {error && <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400">{error}</div>}
+        {error && <div className="mb-4 p-3 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400 text-sm">{error}</div>}
 
         {step === 'company' && (
           <Card className="bg-slate-900 border-slate-700">
@@ -263,43 +304,32 @@ export default function SetupWizard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Company Name *</Label>
-                  <Input value={formData.companyName} onChange={(e) => updateForm('companyName', e.target.value)} placeholder="Acme Ventures" className="bg-slate-800 border-slate-600" />
+                  <Input value={formData.companyName} onChange={(e) => updateForm('companyName', e.target.value)}
+                    placeholder="Acme Ventures" className="bg-slate-800 border-slate-600" />
                 </div>
                 <div className="space-y-2">
                   <Label>Website URL *</Label>
                   <div className="flex gap-2">
-                    <Input value={formData.companyWebsite} onChange={(e) => updateForm('companyWebsite', e.target.value)} placeholder="https://acmeventures.com" className="bg-slate-800 border-slate-600" />
-                    <Button variant="outline" size="sm" onClick={extractFromWebsite} disabled={!formData.companyWebsite || isLoading}>
+                    <Input value={formData.companyWebsite} onChange={(e) => updateForm('companyWebsite', e.target.value)}
+                      placeholder="https://acme.vc" className="bg-slate-800 border-slate-600" />
+                    <Button variant="outline" onClick={extractFromWebsite} disabled={isLoading || !formData.companyWebsite}>
                       {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-400">Click sparkle to auto-extract branding</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Company Phone *</Label>
-                  <Input value={formData.companyPhone} onChange={(e) => updateForm('companyPhone', e.target.value)} placeholder="+1 (555) 123-4567" className="bg-slate-800 border-slate-600" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Company Email (optional)</Label>
-                  <Input type="email" value={formData.companyEmail} onChange={(e) => updateForm('companyEmail', e.target.value)} placeholder="info@acmeventures.com" className="bg-slate-800 border-slate-600" />
                 </div>
               </div>
-              {formData.extractedThesis && (
-                <div className="mt-4 p-4 bg-slate-800 rounded-lg border border-slate-600">
-                  <Label className="text-green-400 flex items-center gap-2"><Sparkles className="w-4 h-4" /> Extracted from website</Label>
-                  <p className="text-sm text-gray-300 mt-2">{formData.extractedThesis}</p>
-                  <div className="flex gap-4 mt-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded border border-slate-500" style={{ backgroundColor: formData.extractedColors.primary }} />
-                      <span className="text-xs text-gray-400">Primary</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded border border-slate-500" style={{ backgroundColor: formData.extractedColors.accent }} />
-                      <span className="text-xs text-gray-400">Accent</span>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Phone Number *</Label>
+                  <Input value={formData.companyPhone} onChange={(e) => updateForm('companyPhone', e.target.value)}
+                    placeholder="+1 (555) 000-0000" className="bg-slate-800 border-slate-600" />
                 </div>
-              )}
+                <div className="space-y-2">
+                  <Label>Contact Email</Label>
+                  <Input value={formData.companyEmail} onChange={(e) => updateForm('companyEmail', e.target.value)}
+                    placeholder="contact@acme.vc" className="bg-slate-800 border-slate-600" />
+                </div>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -307,15 +337,33 @@ export default function SetupWizard() {
         {step === 'admin' && (
           <Card className="bg-slate-900 border-slate-700">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><User className="w-5 h-5 text-blue-500" />Admin User</CardTitle>
-              <CardDescription>Primary administrator for the platform</CardDescription>
+              <CardTitle className="flex items-center gap-2"><User className="w-5 h-5 text-blue-500" />Admin Account</CardTitle>
+              <CardDescription>Set up the primary administrator</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>First Name *</Label><Input value={formData.adminFirstName} onChange={(e) => updateForm('adminFirstName', e.target.value)} placeholder="John" className="bg-slate-800 border-slate-600" /></div>
-                <div className="space-y-2"><Label>Last Name *</Label><Input value={formData.adminLastName} onChange={(e) => updateForm('adminLastName', e.target.value)} placeholder="Smith" className="bg-slate-800 border-slate-600" /></div>
-                <div className="space-y-2"><Label>Email *</Label><Input type="email" value={formData.adminEmail} onChange={(e) => updateForm('adminEmail', e.target.value)} placeholder="john@acmeventures.com" className="bg-slate-800 border-slate-600" /></div>
-                <div className="space-y-2"><Label>Phone (optional)</Label><Input value={formData.adminPhone} onChange={(e) => updateForm('adminPhone', e.target.value)} placeholder="+1 (555) 987-6543" className="bg-slate-800 border-slate-600" /></div>
+                <div className="space-y-2">
+                  <Label>First Name *</Label>
+                  <Input value={formData.adminFirstName} onChange={(e) => updateForm('adminFirstName', e.target.value)}
+                    placeholder="John" className="bg-slate-800 border-slate-600" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Last Name *</Label>
+                  <Input value={formData.adminLastName} onChange={(e) => updateForm('adminLastName', e.target.value)}
+                    placeholder="Smith" className="bg-slate-800 border-slate-600" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Email Address *</Label>
+                  <Input value={formData.adminEmail} onChange={(e) => updateForm('adminEmail', e.target.value)}
+                    placeholder="john@acme.vc" className="bg-slate-800 border-slate-600" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Phone Number</Label>
+                  <Input value={formData.adminPhone} onChange={(e) => updateForm('adminPhone', e.target.value)}
+                    placeholder="+1 (555) 000-0000" className="bg-slate-800 border-slate-600" />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -324,19 +372,19 @@ export default function SetupWizard() {
         {step === 'voice' && (
           <Card className="bg-slate-900 border-slate-700">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Mic className="w-5 h-5 text-blue-500" />Voice Agent Configuration</CardTitle>
-              <CardDescription>Configure the ElevenLabs AI voice coach</CardDescription>
+              <CardTitle className="flex items-center gap-2"><Mic className="w-5 h-5 text-blue-500" />Voice Agent Setup</CardTitle>
+              <CardDescription>Configure the AI voice coaching agent</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Agent Name *</Label>
-                  <Input value={formData.agentName} onChange={(e) => updateForm('agentName', e.target.value)} placeholder="Sarah" className="bg-slate-800 border-slate-600" />
-                  <p className="text-xs text-gray-400">The AI coach name (e.g., "Hi, I'm Sarah!")</p>
-                </div>
+              <div className="space-y-2">
+                <Label>Agent Name *</Label>
+                <Input value={formData.agentName} onChange={(e) => updateForm('agentName', e.target.value)}
+                  placeholder="Sophie" className="bg-slate-800 border-slate-600" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Voice Gender *</Label>
-                  <Select value={formData.voiceGender} onValueChange={(v) => updateForm('voiceGender', v)}>
+                  <Select value={formData.voiceGender} onValueChange={(v: 'female' | 'male') => updateForm('voiceGender', v)}>
                     <SelectTrigger className="bg-slate-800 border-slate-600"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="female">Female</SelectItem><SelectItem value="male">Male</SelectItem></SelectContent>
                   </Select>
@@ -346,8 +394,7 @@ export default function SetupWizard() {
                   <Select value={formData.voiceLanguage} onValueChange={(v) => updateForm('voiceLanguage', v)}>
                     <SelectTrigger className="bg-slate-800 border-slate-600"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="english">English (US)</SelectItem><SelectItem value="english-uk">English (UK)</SelectItem>
-                      <SelectItem value="hindi">Hindi</SelectItem><SelectItem value="spanish">Spanish</SelectItem>
+                      <SelectItem value="english">English</SelectItem><SelectItem value="spanish">Spanish</SelectItem>
                       <SelectItem value="french">French</SelectItem><SelectItem value="german">German</SelectItem>
                     </SelectContent>
                   </Select>
@@ -436,11 +483,11 @@ export default function SetupWizard() {
               <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                 <h4 className="font-medium text-blue-400 mb-2">What will be created:</h4>
                 <ul className="text-sm text-gray-300 space-y-1">
-                  <li>Ã¢â‚¬Â¢ Supabase project with database schema</li>
-                  <li>Ã¢â‚¬Â¢ Vercel deployment with environment variables</li>
-                  <li>Ã¢â‚¬Â¢ ElevenLabs voice agent ({formData.agentName})</li>
-                  <li>Ã¢â‚¬Â¢ GitHub repository with customized code</li>
-                  <li>Ã¢â‚¬Â¢ Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
+                  <li>• Supabase project with database schema</li>
+                  <li>• Vercel deployment with environment variables</li>
+                  <li>• ElevenLabs voice agent ({formData.agentName})</li>
+                  <li>• GitHub repository with customized code</li>
+                  <li>• Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
                 </ul>
               </div>
             </CardContent>
@@ -468,7 +515,7 @@ export default function SetupWizard() {
                       <Icon className="w-5 h-5 text-gray-400" />
                       <span className={status === 'done' ? 'text-green-400' : 'text-gray-300'}>{item.label}</span>
                       {status === 'done' && item.key === 'vercel' && createdResources.vercelUrl && (
-                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site Ã¢â€ â€™</a>
+                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site →</a>
                       )}
                     </div>
                   );

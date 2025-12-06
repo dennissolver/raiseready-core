@@ -17,14 +17,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     console.log('Received body:', JSON.stringify(body, null, 2));
-    
+
     const { projectName, githubRepo, envVars } = body as CreateVercelRequest;
 
     if (!projectName) {
       console.error('Missing projectName');
       return NextResponse.json({ error: 'Project name required', received: body }, { status: 400 });
     }
-    
+
     if (!githubRepo) {
       console.error('Missing githubRepo');
       return NextResponse.json({ error: 'GitHub repo required', received: body }, { status: 400 });
@@ -46,8 +46,10 @@ export async function POST(req: NextRequest) {
 
     // Step 1: Check if project already exists
     console.log(`Checking for existing Vercel project: ${projectName}`);
-    
+
     let projectId = '';
+    let isExistingProject = false;
+
     const checkResponse = await fetch(`${VERCEL_API}/v9/projects/${projectName}${teamParam}`, {
       headers,
     });
@@ -56,6 +58,7 @@ export async function POST(req: NextRequest) {
       const existingProject = await checkResponse.json();
       console.log(`Project already exists: ${existingProject.id}`);
       projectId = existingProject.id;
+      isExistingProject = true;
     } else {
       // Step 2: Create the project
       console.log(`Creating Vercel project: ${projectName} linked to ${githubRepo}`);
@@ -84,40 +87,99 @@ export async function POST(req: NextRequest) {
       const project = await createResponse.json();
       console.log('Project created:', project.id);
       projectId = project.id;
-
-      // Step 3: Set environment variables
-      const allEnvVars = {
-        ...(envVars || {}),
-        IS_ADMIN_PLATFORM: 'false',
-        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-        NEXT_PUBLIC_APP_URL: `https://${projectName}.vercel.app`,
-      };
-
-      for (const [key, value] of Object.entries(allEnvVars)) {
-        if (!value) continue;
-
-        try {
-          await fetch(`${VERCEL_API}/v10/projects/${projectId}/env${teamParam}`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              key,
-              value,
-              type: key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted',
-              target: ['production', 'preview', 'development'],
-            }),
-          });
-        } catch (err) {
-          console.warn(`Failed to set env var ${key}:`, err);
-        }
-      }
-      console.log('Environment variables set');
     }
+
+    // Step 3: Set environment variables (ALWAYS - for both new and existing projects)
+    const allEnvVars = {
+      ...(envVars || {}),
+      IS_ADMIN_PLATFORM: 'false',
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      NEXT_PUBLIC_APP_URL: `https://${projectName}.vercel.app`,
+    };
+
+    console.log(`Setting ${Object.keys(allEnvVars).length} environment variables...`);
+
+    for (const [key, value] of Object.entries(allEnvVars)) {
+      if (!value) continue;
+
+      try {
+        // First, try to check if the env var already exists
+        const checkEnvResponse = await fetch(
+          `${VERCEL_API}/v10/projects/${projectId}/env${teamParam}`,
+          { headers }
+        );
+
+        let existingEnvId: string | null = null;
+
+        if (checkEnvResponse.ok) {
+          const existingEnvs = await checkEnvResponse.json();
+          const existingEnv = existingEnvs.envs?.find((env: any) => env.key === key);
+          if (existingEnv) {
+            existingEnvId = existingEnv.id;
+          }
+        }
+
+        if (existingEnvId) {
+          // Update existing env var
+          const updateResponse = await fetch(
+            `${VERCEL_API}/v10/projects/${projectId}/env/${existingEnvId}${teamParam}`,
+            {
+              method: 'PATCH',
+              headers,
+              body: JSON.stringify({
+                value,
+                type: key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted',
+                target: ['production', 'preview', 'development'],
+              }),
+            }
+          );
+
+          if (updateResponse.ok) {
+            console.log(`Updated env var: ${key}`);
+          } else {
+            const errText = await updateResponse.text();
+            console.warn(`Failed to update env var ${key}:`, errText);
+          }
+        } else {
+          // Create new env var
+          const createEnvResponse = await fetch(
+            `${VERCEL_API}/v10/projects/${projectId}/env${teamParam}`,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                key,
+                value,
+                type: key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted',
+                target: ['production', 'preview', 'development'],
+              }),
+            }
+          );
+
+          if (createEnvResponse.ok) {
+            console.log(`Created env var: ${key}`);
+          } else {
+            const errText = await createEnvResponse.text();
+            // Don't fail on duplicate - might be a race condition
+            if (!errText.includes('already exists')) {
+              console.warn(`Failed to create env var ${key}:`, errText);
+            } else {
+              console.log(`Env var ${key} already exists, skipping`);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`Error setting env var ${key}:`, err);
+        // Continue with other env vars
+      }
+    }
+
+    console.log('Environment variables configured');
 
     // Step 4: Trigger deployment
     console.log(`Triggering deployment for ${projectName}`);
-    
+
     const deployResponse = await fetch(`${VERCEL_API}/v13/deployments${teamParam}`, {
       method: 'POST',
       headers,
@@ -146,7 +208,7 @@ export async function POST(req: NextRequest) {
     } else {
       const deployError = await deployResponse.text();
       console.warn('Deployment trigger warning:', deployError);
-      // Don't fail - project still created
+      // Don't fail - project still created/updated
     }
 
     return NextResponse.json({
@@ -155,12 +217,14 @@ export async function POST(req: NextRequest) {
       projectName,
       url: deploymentUrl,
       deploymentId,
+      isExistingProject,
+      envVarsConfigured: Object.keys(allEnvVars).filter(k => allEnvVars[k as keyof typeof allEnvVars]).length,
     });
 
   } catch (error) {
     console.error('Create Vercel error:', error);
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
 }
