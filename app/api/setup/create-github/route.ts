@@ -30,12 +30,14 @@ interface CreateGithubRequest {
     supabaseProjectId: string;
     elevenlabsAgentId: string;
   };
+  skipConfigUpdate?: boolean;  // Create repo only, don't push config
+  pushConfigOnly?: boolean;    // Skip repo creation, just push config
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body: CreateGithubRequest = await req.json();
-    const { repoName, formData, createdResources } = body;
+    const { repoName, formData, createdResources, skipConfigUpdate, pushConfigOnly } = body;
 
     if (!repoName) {
       return NextResponse.json({ error: 'Repository name required' }, { status: 400 });
@@ -55,65 +57,85 @@ export async function POST(req: NextRequest) {
       'Content-Type': 'application/json',
     };
 
-    // Step 1: Check if repo already exists
-    console.log(`Checking for existing repo: ${owner}/${repoName}`);
-    
-    const checkResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}`, { headers });
-    
-    let repoUrl = '';
-    let repoFullName = '';
+    let repoUrl = `https://github.com/${owner}/${repoName}`;
+    let repoFullName = `${owner}/${repoName}`;
     let repoExists = false;
 
-    if (checkResponse.ok) {
-      const existingRepo = await checkResponse.json();
-      console.log(`Repo already exists: ${existingRepo.html_url}`);
-      repoUrl = existingRepo.html_url;
-      repoFullName = existingRepo.full_name;
-      repoExists = true;
-    } else {
-      // Step 2: Create repo from template
-      console.log(`Creating GitHub repo: ${repoName} from template ${templateRepo}`);
+    // If pushConfigOnly, skip straight to config update
+    if (!pushConfigOnly) {
+      // Step 1: Check if repo already exists
+      console.log(`Checking for existing repo: ${owner}/${repoName}`);
 
-      const createResponse = await fetch(`${GITHUB_API}/repos/${owner}/${templateRepo}/generate`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          owner,
-          name: repoName,
-          description: `${formData.companyName} Pitch Coaching Platform`,
-          private: true,
-          include_all_branches: false,
-        }),
-      });
+      const checkResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}`, { headers });
 
-      if (!createResponse.ok) {
-        const error = await createResponse.text();
-        console.error('GitHub create error:', error);
-        return NextResponse.json({ error: `Failed to create repo: ${error}` }, { status: 500 });
+      if (checkResponse.ok) {
+        const existingRepo = await checkResponse.json();
+        console.log(`Repo already exists: ${existingRepo.html_url}`);
+        repoUrl = existingRepo.html_url;
+        repoFullName = existingRepo.full_name;
+        repoExists = true;
+      } else {
+        // Step 2: Create repo from template
+        console.log(`Creating GitHub repo: ${repoName} from template ${templateRepo}`);
+
+        const createResponse = await fetch(`${GITHUB_API}/repos/${owner}/${templateRepo}/generate`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            owner,
+            name: repoName,
+            description: `${formData.companyName} Pitch Coaching Platform`,
+            private: true,
+            include_all_branches: false,
+          }),
+        });
+
+        if (!createResponse.ok) {
+          const error = await createResponse.text();
+          console.error('GitHub create error:', error);
+          return NextResponse.json({ error: `Failed to create repo: ${error}` }, { status: 500 });
+        }
+
+        const repo = await createResponse.json();
+        console.log('Repo created:', repo.full_name);
+        repoUrl = repo.html_url;
+        repoFullName = repo.full_name;
+
+        // Wait for repo to initialize
+        await sleep(5000);
       }
+    } else {
+      // pushConfigOnly mode - repo should already exist
+      console.log(`Push config only mode for: ${owner}/${repoName}`);
+      repoExists = true;
+    }
 
-      const repo = await createResponse.json();
-      console.log('Repo created:', repo.full_name);
-      repoUrl = repo.html_url;
-      repoFullName = repo.full_name;
-
-      // Wait for repo to initialize
-      await sleep(5000);
+    // Skip config update if requested (first phase of two-phase creation)
+    if (skipConfigUpdate) {
+      console.log('Skipping config update (skipConfigUpdate=true)');
+      return NextResponse.json({
+        success: true,
+        repoUrl,
+        repoFullName,
+        cloneUrl: `https://github.com/${owner}/${repoName}.git`,
+        configUpdated: false,
+        phase: 'repo-created',
+      });
     }
 
     // Step 3: Update config/client.ts to trigger Vercel deploy
     console.log('Updating config to trigger deployment...');
-    
+
     const clientConfig = generateClientConfig(formData, createdResources, repoName);
-    
+
     // Get current file SHA
     let attempts = 0;
     let fileUpdated = false;
-    
+
     while (attempts < 5 && !fileUpdated) {
       attempts++;
       await sleep(2000);
-      
+
       try {
         const getFileResponse = await fetch(
           `${GITHUB_API}/repos/${owner}/${repoName}/contents/config/client.ts`,
@@ -122,7 +144,7 @@ export async function POST(req: NextRequest) {
 
         if (getFileResponse.ok) {
           const fileData = await getFileResponse.json();
-          
+
           const updateResponse = await fetch(
             `${GITHUB_API}/repos/${owner}/${repoName}/contents/config/client.ts`,
             {
@@ -158,12 +180,13 @@ export async function POST(req: NextRequest) {
       repoFullName,
       cloneUrl: `https://github.com/${owner}/${repoName}.git`,
       configUpdated: fileUpdated,
+      phase: pushConfigOnly ? 'config-pushed' : 'complete',
     });
 
   } catch (error) {
     console.error('Create GitHub error:', error);
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
 }

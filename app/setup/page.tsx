@@ -192,14 +192,14 @@ export default function SetupWizard() {
       } else { setCreationStatus(prev => ({ ...prev, elevenlabs: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, elevenlabs: 'error' })); }
 
-    // Step 4: GitHub
+    // Step 4: GitHub - Create repo ONLY (no config update yet)
     setCreationStatus(prev => ({ ...prev, github: 'creating' }));
-    let githubRepoFullName = '';
-    let githubRepoUrl = '';
+    const githubOwner = 'dennissolver';
+    let githubRepoFullName = `${githubOwner}/${projectSlug}`;
+    let githubRepoUrl = `https://github.com/${githubOwner}/${projectSlug}`;
     try {
       const res = await fetch('/api/setup/create-github', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        // FIX: Pass local variables instead of stale state
         body: JSON.stringify({
           repoName: projectSlug,
           formData,
@@ -209,19 +209,20 @@ export default function SetupWizard() {
             supabaseAnonKey,
             supabaseServiceKey,
             elevenlabsAgentId,
-          }
+          },
+          skipConfigUpdate: true, // Just create repo, don't push config yet
         }),
       });
       if (res.ok) {
         const data = await res.json();
-        githubRepoFullName = data.repoFullName || `dennissolver/${projectSlug}`;
-        githubRepoUrl = data.repoUrl || `https://github.com/dennissolver/${projectSlug}`;
+        githubRepoFullName = data.repoFullName || githubRepoFullName;
+        githubRepoUrl = data.repoUrl || githubRepoUrl;
         setCreatedResources(prev => ({ ...prev, githubRepo: githubRepoFullName, githubUrl: githubRepoUrl }));
         setCreationStatus(prev => ({ ...prev, github: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
 
-    // Step 5: Vercel
+    // Step 5: Vercel - Create project linked to GitHub repo
     setCreationStatus(prev => ({ ...prev, vercel: 'creating' }));
     try {
       const res = await fetch('/api/setup/create-vercel', {
@@ -229,12 +230,11 @@ export default function SetupWizard() {
         body: JSON.stringify({
           projectName: projectSlug,
           githubRepo: githubRepoFullName,
-          // FIX 4: Pass ALL Supabase credentials to Vercel
           envVars: {
             NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
-            NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,      // ← ADDED
-            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,       // ← ADDED
-            NEXT_PUBLIC_ELEVENLABS_AGENT_ID: elevenlabsAgentId,  // ← ADDED (bonus)
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
+            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,
+            NEXT_PUBLIC_ELEVENLABS_AGENT_ID: elevenlabsAgentId,
           }
         }),
       });
@@ -244,6 +244,26 @@ export default function SetupWizard() {
         setCreationStatus(prev => ({ ...prev, vercel: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, vercel: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, vercel: 'error' })); }
+
+    // Step 6: Push config to GitHub - This triggers Vercel auto-deploy
+    console.log('Pushing config to trigger deployment...');
+    try {
+      await fetch('/api/setup/create-github', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoName: projectSlug,
+          formData,
+          createdResources: {
+            supabaseUrl,
+            supabaseProjectId,
+            supabaseAnonKey,
+            supabaseServiceKey,
+            elevenlabsAgentId,
+          },
+          pushConfigOnly: true, // Repo exists, just push config update
+        }),
+      });
+    } catch (err) { console.warn('Config push failed:', err); }
 
     setCreationStatus(prev => ({ ...prev, deployment: 'done' }));
   };

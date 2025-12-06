@@ -177,46 +177,17 @@ export async function POST(req: NextRequest) {
 
     console.log('Environment variables configured');
 
-    // Step 4: Trigger deployment
-    console.log(`Triggering deployment for ${projectName}`);
+    // Note: We don't manually trigger deployment here.
+    // The GitHub config push (which happens AFTER this) will auto-trigger deployment via webhook.
 
-    const deployResponse = await fetch(`${VERCEL_API}/v13/deployments${teamParam}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        name: projectName,
-        project: projectId,
-        target: 'production',
-        gitSource: {
-          type: 'github',
-          repo: githubRepo,
-          ref: 'main',
-        },
-      }),
-    });
-
-    let deploymentUrl = `https://${projectName}.vercel.app`;
-    let deploymentId = '';
-
-    if (deployResponse.ok) {
-      const deployment = await deployResponse.json();
-      deploymentId = deployment.id;
-      if (deployment.url) {
-        deploymentUrl = `https://${deployment.url}`;
-      }
-      console.log('Deployment triggered:', deploymentId);
-    } else {
-      const deployError = await deployResponse.text();
-      console.warn('Deployment trigger warning:', deployError);
-      // Don't fail - project still created/updated
-    }
+    const deploymentUrl = `https://${projectName}.vercel.app`;
 
     return NextResponse.json({
       success: true,
       projectId,
       projectName,
       url: deploymentUrl,
-      deploymentId,
+      deploymentId: '',
       isExistingProject,
       envVarsConfigured: Object.keys(allEnvVars).filter(k => allEnvVars[k as keyof typeof allEnvVars]).length,
     });
