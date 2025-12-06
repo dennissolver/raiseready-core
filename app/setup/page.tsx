@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -61,7 +61,7 @@ export default function SetupWizard() {
 
   const [createdResources, setCreatedResources] = useState({
     supabaseUrl: '', supabaseProjectId: '', vercelUrl: '',
-    vercelProjectId: '', elevenlabsAgentId: '', githubRepo: '',
+    vercelProjectId: '', elevenlabsAgentId: '', githubRepo: '', githubUrl: '',
   });
 
   const updateForm = (field: keyof FormData, value: any) => {
@@ -167,7 +167,7 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCreatedResources(prev => ({ ...prev, githubRepo: data.repoUrl }));
+        setCreatedResources(prev => ({ ...prev, githubRepo: data.repoFullName, githubUrl: data.repoUrl }));
         setCreationStatus(prev => ({ ...prev, github: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
@@ -432,11 +432,11 @@ export default function SetupWizard() {
               <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                 <h4 className="font-medium text-blue-400 mb-2">What will be created:</h4>
                 <ul className="text-sm text-gray-300 space-y-1">
-                  <li>• Supabase project with database schema</li>
-                  <li>• Vercel deployment with environment variables</li>
-                  <li>• ElevenLabs voice agent ({formData.agentName})</li>
-                  <li>• GitHub repository with customized code</li>
-                  <li>• Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
+                  <li>â€¢ Supabase project with database schema</li>
+                  <li>â€¢ Vercel deployment with environment variables</li>
+                  <li>â€¢ ElevenLabs voice agent ({formData.agentName})</li>
+                  <li>â€¢ GitHub repository with customized code</li>
+                  <li>â€¢ Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
                 </ul>
               </div>
             </CardContent>
@@ -464,7 +464,7 @@ export default function SetupWizard() {
                       <Icon className="w-5 h-5 text-gray-400" />
                       <span className={status === 'done' ? 'text-green-400' : 'text-gray-300'}>{item.label}</span>
                       {status === 'done' && item.key === 'vercel' && createdResources.vercelUrl && (
-                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site →</a>
+                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site â†’</a>
                       )}
                     </div>
                   );
@@ -477,7 +477,7 @@ export default function SetupWizard() {
                   <p className="text-gray-300 mb-4">{formData.companyName}'s pitch platform is now live.</p>
                   <div className="flex gap-4 justify-center">
                     <Button asChild><a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer">Visit Platform</a></Button>
-                    <Button variant="outline" asChild><a href={createdResources.githubRepo} target="_blank" rel="noopener noreferrer">View Code</a></Button>
+                    <Button variant="outline" asChild><a href={createdResources.githubUrl || createdResources.githubRepo} target="_blank" rel="noopener noreferrer">View Code</a></Button>
                   </div>
                 </div>
               )}
