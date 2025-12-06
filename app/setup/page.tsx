@@ -160,6 +160,8 @@ export default function SetupWizard() {
 
     // Step 4: GitHub
     setCreationStatus(prev => ({ ...prev, github: 'creating' }));
+    let githubRepoFullName = '';
+    let githubRepoUrl = '';
     try {
       const res = await fetch('/api/setup/create-github', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -167,7 +169,9 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCreatedResources(prev => ({ ...prev, githubRepo: data.repoFullName, githubUrl: data.repoUrl }));
+        githubRepoFullName = data.repoFullName || `dennissolver/${projectSlug}`;
+        githubRepoUrl = data.repoUrl || `https://github.com/dennissolver/${projectSlug}`;
+        setCreatedResources(prev => ({ ...prev, githubRepo: githubRepoFullName, githubUrl: githubRepoUrl }));
         setCreationStatus(prev => ({ ...prev, github: 'done' }));
       } else { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, github: 'error' })); }
@@ -177,7 +181,7 @@ export default function SetupWizard() {
     try {
       const res = await fetch('/api/setup/create-vercel', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: projectSlug, githubRepo: createdResources.githubRepo,
+        body: JSON.stringify({ projectName: projectSlug, githubRepo: githubRepoFullName,
           envVars: { NEXT_PUBLIC_SUPABASE_URL: createdResources.supabaseUrl } }),
       });
       if (res.ok) {
@@ -432,11 +436,11 @@ export default function SetupWizard() {
               <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                 <h4 className="font-medium text-blue-400 mb-2">What will be created:</h4>
                 <ul className="text-sm text-gray-300 space-y-1">
-                  <li>â€¢ Supabase project with database schema</li>
-                  <li>â€¢ Vercel deployment with environment variables</li>
-                  <li>â€¢ ElevenLabs voice agent ({formData.agentName})</li>
-                  <li>â€¢ GitHub repository with customized code</li>
-                  <li>â€¢ Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
+                  <li>Ã¢â‚¬Â¢ Supabase project with database schema</li>
+                  <li>Ã¢â‚¬Â¢ Vercel deployment with environment variables</li>
+                  <li>Ã¢â‚¬Â¢ ElevenLabs voice agent ({formData.agentName})</li>
+                  <li>Ã¢â‚¬Â¢ GitHub repository with customized code</li>
+                  <li>Ã¢â‚¬Â¢ Platform URL: {formData.companyName.toLowerCase().replace(/\s+/g, '-')}-pitch.vercel.app</li>
                 </ul>
               </div>
             </CardContent>
@@ -464,7 +468,7 @@ export default function SetupWizard() {
                       <Icon className="w-5 h-5 text-gray-400" />
                       <span className={status === 'done' ? 'text-green-400' : 'text-gray-300'}>{item.label}</span>
                       {status === 'done' && item.key === 'vercel' && createdResources.vercelUrl && (
-                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site â†’</a>
+                        <a href={createdResources.vercelUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-blue-400 hover:underline text-sm">View Site Ã¢â€ â€™</a>
                       )}
                     </div>
                   );
