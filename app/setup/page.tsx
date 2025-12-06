@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import {
   Building2, User, Globe, Mic, Brain, CheckCircle, Loader2,
-  ArrowRight, ArrowLeft, Sparkles, Database, Rocket
+  ArrowRight, ArrowLeft, Sparkles, Database, Rocket, Mail
 } from 'lucide-react';
 
 type Step = 'company' | 'admin' | 'voice' | 'ai' | 'review' | 'creating';
@@ -39,6 +39,7 @@ interface CreationStatus {
   extraction: 'pending' | 'creating' | 'done' | 'error';
   github: 'pending' | 'creating' | 'done' | 'error';
   deployment: 'pending' | 'creating' | 'done' | 'error';
+  email: 'pending' | 'creating' | 'done' | 'error';
 }
 
 export default function SetupWizard() {
@@ -56,7 +57,7 @@ export default function SetupWizard() {
 
   const [creationStatus, setCreationStatus] = useState<CreationStatus>({
     supabase: 'pending', vercel: 'pending', elevenlabs: 'pending',
-    extraction: 'pending', github: 'pending', deployment: 'pending',
+    extraction: 'pending', github: 'pending', deployment: 'pending', email: 'pending',
   });
 
   // FIX 1: Added supabaseAnonKey and supabaseServiceKey to track credentials
@@ -192,6 +193,49 @@ export default function SetupWizard() {
       } else { setCreationStatus(prev => ({ ...prev, elevenlabs: 'error' })); }
     } catch { setCreationStatus(prev => ({ ...prev, elevenlabs: 'error' })); }
 
+    // Step 3b: Register as Proxy Client (get clientSecret for AI proxy)
+    let proxyClientSecret = '';
+    console.log('Registering proxy client...');
+    try {
+      const res = await fetch('/api/proxy/register-client', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.companyName,
+          slug: projectSlug,
+          adminEmail: formData.adminEmail,
+          adminName: `${formData.adminFirstName} ${formData.adminLastName}`,
+          supabaseProjectId: supabaseProjectId,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        proxyClientSecret = data.clientSecret;
+        console.log('Proxy client registered:', projectSlug);
+      } else {
+        console.warn('Proxy registration failed');
+      }
+    } catch (err) { console.warn('Proxy registration error:', err); }
+
+    // Step 3c: Create Resend API Key for client emails
+    let clientResendApiKey = '';
+    console.log('Creating Resend API key...');
+    try {
+      const res = await fetch('/api/proxy/create-resend-key', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientSlug: projectSlug,
+          clientName: formData.companyName,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.apiKey) {
+          clientResendApiKey = data.apiKey;
+          console.log('Resend API key created');
+        }
+      }
+    } catch (err) { console.warn('Resend key creation error:', err); }
+
     // Step 4: GitHub - Create repo ONLY (no config update yet)
     setCreationStatus(prev => ({ ...prev, github: 'creating' }));
     const githubOwner = 'dennissolver';
@@ -225,6 +269,7 @@ export default function SetupWizard() {
     // Step 5: Vercel - Create project linked to GitHub repo
     setCreationStatus(prev => ({ ...prev, vercel: 'creating' }));
     let vercelUrl = `https://${projectSlug}.vercel.app`;
+    const proxyUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://raisereadytemplate.vercel.app';
     try {
       const res = await fetch('/api/setup/create-vercel', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -232,10 +277,20 @@ export default function SetupWizard() {
           projectName: projectSlug,
           githubRepo: githubRepoFullName,
           envVars: {
+            // Supabase (client-specific)
             NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
             NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
             SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,
+            // ElevenLabs (client-specific agent)
             NEXT_PUBLIC_ELEVENLABS_AGENT_ID: elevenlabsAgentId,
+            // Proxy credentials (instead of raw AI keys)
+            RAISEREADY_PROXY_URL: `${proxyUrl}/api/proxy`,
+            RAISEREADY_CLIENT_ID: projectSlug,
+            RAISEREADY_CLIENT_SECRET: proxyClientSecret,
+            // Client's own Resend key for emails
+            RESEND_API_KEY: clientResendApiKey,
+            // App URL
+            NEXT_PUBLIC_APP_URL: vercelUrl,
           }
         }),
       });
@@ -279,6 +334,32 @@ export default function SetupWizard() {
         }),
       });
     } catch (err) { console.warn('Config push failed:', err); }
+
+    // Step 8: Send welcome email to admin
+    setCreationStatus(prev => ({ ...prev, email: 'creating' }));
+    console.log('Sending welcome email...');
+    try {
+      const emailRes = await fetch('/api/setup/send-welcome-email', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          adminEmail: formData.adminEmail,
+          adminFirstName: formData.adminFirstName,
+          adminLastName: formData.adminLastName,
+          companyName: formData.companyName,
+          platformUrl: vercelUrl,
+          tempPassword: `${formData.companyName.replace(/\s+/g, '')}2024!`,
+        }),
+      });
+      if (emailRes.ok) {
+        setCreationStatus(prev => ({ ...prev, email: 'done' }));
+        console.log('Welcome email sent');
+      } else {
+        setCreationStatus(prev => ({ ...prev, email: 'error' }));
+      }
+    } catch (err) {
+      console.warn('Welcome email failed:', err);
+      setCreationStatus(prev => ({ ...prev, email: 'error' }));
+    }
 
     setCreationStatus(prev => ({ ...prev, deployment: 'done' }));
   };
@@ -554,7 +635,8 @@ export default function SetupWizard() {
                   { key: 'extraction', label: 'Extracting branding & thesis', icon: Sparkles },
                   { key: 'elevenlabs', label: 'Creating ElevenLabs agent', icon: Mic },
                   { key: 'github', label: 'Creating GitHub repository', icon: Globe },
-                  { key: 'vercel', label: 'Deploying to Vercel', icon: Rocket }].map((item) => {
+                  { key: 'vercel', label: 'Deploying to Vercel', icon: Rocket },
+                  { key: 'email', label: 'Sending welcome email', icon: Mail }].map((item) => {
                   const Icon = item.icon;
                   const status = creationStatus[item.key as keyof CreationStatus];
                   return (
