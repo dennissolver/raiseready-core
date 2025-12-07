@@ -1,5 +1,12 @@
+/**
+ * Founder Insights Extraction
+ *
+ * DETERMINISM: Uses temperature: 0 for consistent extraction results
+ * Extracts structured data from coaching conversations
+ */
+
 import { createClient } from '@/lib/supabase/server'
-import { anthropic } from './anthropic'
+import { createMessage, TEMPERATURE } from './anthropic'
 import { cleanJsonResponse } from './utils'
 
 export async function extractFounderInsights(
@@ -30,15 +37,15 @@ Extract ONLY if explicitly mentioned (return null if not found):
 
 Return valid JSON only.`
 
-    const message = await anthropic.messages.create({
+    const response = await createMessage({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
+      temperature: TEMPERATURE.DETERMINISTIC, // Consistent extraction
       messages: [{ role: 'user', content: extractionPrompt }]
     })
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : '{}'
+    const responseText = response.content[0].type === 'text' ? response.content[0].text : '{}'
 
-    // Use shared utility instead of inline cleaning
     const cleanedText = cleanJsonResponse(responseText)
 
     let insights
@@ -48,7 +55,6 @@ Return valid JSON only.`
       console.error('Failed to parse founder insights:', error)
       console.error('Raw response:', responseText)
       console.error('Cleaned response:', cleanedText)
-      // Return early if parsing fails - extraction is non-critical
       return
     }
 

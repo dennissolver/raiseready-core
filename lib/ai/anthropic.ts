@@ -1,6 +1,23 @@
+/**
+ * Anthropic Claude API Client
+ *
+ * PRIVACY NOTICE:
+ * - Anthropic API does NOT use customer data for model training by default
+ * - No additional headers or opt-out required
+ * - See: https://www.anthropic.com/policies/privacy-policy
+ *
+ * TEMPERATURE SETTINGS:
+ * - temperature: 0 → Deterministic (scoring, extraction, analysis)
+ * - temperature: 0.7-1.0 → Creative (coaching conversations)
+ */
+
 import Anthropic from '@anthropic-ai/sdk'
 
-// Proxy configuration
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+// Proxy configuration for white-label clients
 const PROXY_URL = process.env.RAISEREADY_PROXY_URL
 const CLIENT_ID = process.env.RAISEREADY_CLIENT_ID
 const CLIENT_SECRET = process.env.RAISEREADY_CLIENT_SECRET
@@ -8,20 +25,34 @@ const CLIENT_SECRET = process.env.RAISEREADY_CLIENT_SECRET
 // Check if we should use proxy (client platforms) or direct API (admin platform)
 const useProxy = !!(PROXY_URL && CLIENT_ID && CLIENT_SECRET)
 
+// Model configuration
+const DEFAULT_MODEL = 'claude-sonnet-4-20250514'
+
+// Temperature presets
+export const TEMPERATURE = {
+  DETERMINISTIC: 0,      // For scoring, extraction, analysis - consistent results
+  BALANCED: 0.5,         // For structured generation with some variety
+  CREATIVE: 0.8,         // For coaching conversations - natural variation
+} as const
+
 // Direct Anthropic client (only used if not using proxy)
 const anthropic = !useProxy ? new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 }) : null
 
-/**
- * Make a request through the proxy
- */
-async function proxyRequest(body: {
+// ============================================================================
+// PROXY REQUEST HANDLER
+// ============================================================================
+
+interface ProxyRequestBody {
   model: string
   max_tokens: number
   system?: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
-}) {
+  temperature?: number
+}
+
+async function proxyRequest(body: ProxyRequestBody) {
   const response = await fetch(`${PROXY_URL}/chat`, {
     method: 'POST',
     headers: {
@@ -40,26 +71,31 @@ async function proxyRequest(body: {
   return response.json()
 }
 
+// ============================================================================
+// PUBLIC API FUNCTIONS
+// ============================================================================
+
 /**
- * Analyze content with Claude
+ * Analyze content with Claude (deterministic)
+ * Use for: deck analysis, scoring, data extraction
  */
 export async function analyzeWithClaude(prompt: string, context?: string) {
   const content = context ? `${context}\n\n${prompt}` : prompt
   const messages = [{ role: 'user' as const, content }]
 
   if (useProxy) {
-    // Use proxy
     const response = await proxyRequest({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 4000,
+      temperature: TEMPERATURE.DETERMINISTIC,
       messages,
     })
     return response.content[0]?.type === 'text' ? response.content[0].text : ''
   } else {
-    // Use direct API
     const message = await anthropic!.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 4000,
+      temperature: TEMPERATURE.DETERMINISTIC,
       messages,
     })
     return message.content[0].type === 'text' ? message.content[0].text : ''
@@ -67,7 +103,8 @@ export async function analyzeWithClaude(prompt: string, context?: string) {
 }
 
 /**
- * Coach conversation with Claude
+ * Coach conversation with Claude (creative)
+ * Use for: interactive coaching sessions, practice conversations
  */
 export async function coachWithClaude(
   systemPrompt: string,
@@ -86,19 +123,19 @@ export async function coachWithClaude(
   ]
 
   if (useProxy) {
-    // Use proxy
     const response = await proxyRequest({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 2000,
+      temperature: TEMPERATURE.CREATIVE,
       system: systemPrompt,
       messages,
     })
     return response.content[0]?.type === 'text' ? response.content[0].text : ''
   } else {
-    // Use direct API
     const message = await anthropic!.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 2000,
+      temperature: TEMPERATURE.CREATIVE,
       system: systemPrompt,
       messages,
     })
@@ -115,10 +152,11 @@ export async function streamWithClaude(
   onChunk: (text: string) => void
 ) {
   if (useProxy) {
-    // Proxy streaming (returns full response for now, can enhance later)
+    // Proxy streaming (returns full response for now)
     const response = await proxyRequest({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 2000,
+      temperature: TEMPERATURE.CREATIVE,
       system: systemPrompt,
       messages,
     })
@@ -126,10 +164,10 @@ export async function streamWithClaude(
     onChunk(text)
     return text
   } else {
-    // Direct streaming
     const stream = await anthropic!.messages.stream({
-      model: 'claude-sonnet-4-20250514',
+      model: DEFAULT_MODEL,
       max_tokens: 2000,
+      temperature: TEMPERATURE.CREATIVE,
       system: systemPrompt,
       messages,
     })
@@ -147,6 +185,7 @@ export async function streamWithClaude(
 
 /**
  * Generic message creation (for custom use cases)
+ * Defaults to deterministic temperature - override for coaching
  */
 export async function createMessage(options: {
   model?: string
@@ -156,11 +195,11 @@ export async function createMessage(options: {
   temperature?: number
 }) {
   const {
-    model = 'claude-sonnet-4-20250514',
+    model = DEFAULT_MODEL,
     max_tokens = 4000,
     system,
     messages,
-    temperature,
+    temperature = TEMPERATURE.DETERMINISTIC, // Default to deterministic
   } = options
 
   if (useProxy) {
@@ -169,20 +208,20 @@ export async function createMessage(options: {
       max_tokens,
       system,
       messages,
-      ...(temperature !== undefined && { temperature }),
-    } as any)
+      temperature,
+    })
   } else {
     return anthropic!.messages.create({
       model,
       max_tokens,
       system,
       messages,
-      ...(temperature !== undefined && { temperature }),
+      temperature,
     })
   }
 }
 
-// Export for backwards compatibility (only works if not using proxy)
+// Export for backwards compatibility
 export { anthropic }
 
 // Export proxy status for debugging

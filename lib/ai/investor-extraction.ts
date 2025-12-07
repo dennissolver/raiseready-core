@@ -1,11 +1,12 @@
-import { clientConfig } from '@/config';
-// lib/ai/investor-extraction.ts
-import Anthropic from '@anthropic-ai/sdk'
-import { cleanJsonResponse } from './utils'
+/**
+ * Investor Criteria Extraction
+ *
+ * DETERMINISM: Uses temperature: 0 for consistent extraction results
+ * Extracts investment criteria from discovery conversations
+ */
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
+import { createMessage, TEMPERATURE } from './anthropic'
+import { cleanJsonResponse } from './utils'
 
 export async function extractInvestorCriteria(
   conversation: Array<{role: string, content: string}>
@@ -38,15 +39,15 @@ Extract and return ONLY valid JSON:
 Be specific. If they said "I need to see revenue", that's a deal_breaker.
 If they said "I backed a founder with no experience because of their passion", set min_readiness_score lower.`
 
-  const message = await anthropic.messages.create({
+  const response = await createMessage({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 2000,
+    temperature: TEMPERATURE.DETERMINISTIC, // Consistent extraction
     messages: [{ role: 'user', content: extractionPrompt }]
   })
 
-  const responseText = message.content[0].type === 'text' ? message.content[0].text : '{}'
+  const responseText = response.content[0].type === 'text' ? response.content[0].text : '{}'
 
-  // Use shared utility instead of inline cleaning
   const cleanedResponse = cleanJsonResponse(responseText)
 
   try {

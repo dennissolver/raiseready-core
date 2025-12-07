@@ -1,3 +1,10 @@
+/**
+ * Deck Scoring & Analysis
+ *
+ * DETERMINISM: Uses temperature: 0 for consistent scoring across identical decks
+ * This ensures founders see stable scores when re-analyzing the same content
+ */
+
 import Anthropic from '@anthropic-ai/sdk'
 import { DeckScores } from '@/types/deck'
 import { cleanJsonResponse } from './utils'
@@ -6,7 +13,6 @@ import { cleanJsonResponse } from './utils'
 // TYPES
 // ============================================================================
 
-// Re-export DeckScores for convenience
 export type { DeckScores } from '@/types/deck'
 
 export interface ReadinessAssessment {
@@ -20,14 +26,18 @@ export interface ReadinessAssessment {
 }
 
 // ============================================================================
+// SHARED CLIENT
+// ============================================================================
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+})
+
+// ============================================================================
 // DECK ANALYSIS
 // ============================================================================
 
 export async function analyzeDeck(deckText: string, title: string): Promise<ReadinessAssessment> {
-  const anthropic = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY!,
-  })
-
   const prompt = `Analyze this pitch deck and provide scores for each category (0-100):
 
 DECK TITLE: ${title}
@@ -54,6 +64,7 @@ Only respond with valid JSON, no other text.`
   const message = await anthropic.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 2000,
+    temperature: 0, // DETERMINISTIC: Ensures consistent scoring
     messages: [{ role: 'user', content: prompt }],
   })
 

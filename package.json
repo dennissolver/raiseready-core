@@ -11,7 +11,12 @@
     "type-check": "tsc --noEmit",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "supabase:gen-types": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > types/database.ts",
-    "supabase:gen-types-env": "supabase gen types typescript --project-id \"$SUPABASE_PROJECT_ID\" --schema public > types/database.ts"
+    "supabase:gen-types-env": "supabase gen types typescript --project-id \"$SUPABASE_PROJECT_ID\" --schema public > types/database.ts",
+    "verify:privacy": "npx tsx scripts/verify-privacy-compliance.ts",
+    "fix:privacy": "npx tsx scripts/verify-privacy-compliance.ts --fix",
+    "elevenlabs:configure": "npx tsx lib/elevenlabs/agent-config.ts configure",
+    "elevenlabs:verify": "npx tsx lib/elevenlabs/agent-config.ts verify",
+    "elevenlabs:show": "npx tsx lib/elevenlabs/agent-config.ts show"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.6",
@@ -72,6 +77,7 @@
     "prettier": "^3.3.3",
     "supabase": "^1.200.3",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.19.0",
     "typescript": "^5.6.3"
   },
   "engines": {
