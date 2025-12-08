@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -60,12 +60,11 @@ export default function SetupWizard() {
     extraction: 'pending', github: 'pending', deployment: 'pending', email: 'pending',
   });
 
-  // FIX 1: Added supabaseAnonKey and supabaseServiceKey to track credentials
   const [createdResources, setCreatedResources] = useState({
     supabaseUrl: '',
     supabaseProjectId: '',
-    supabaseAnonKey: '',      // ← ADDED
-    supabaseServiceKey: '',   // ← ADDED
+    supabaseAnonKey: '',
+    supabaseServiceKey: '',
     vercelUrl: '',
     vercelProjectId: '',
     elevenlabsAgentId: '',
@@ -124,11 +123,16 @@ export default function SetupWizard() {
     setStep('creating');
     const projectSlug = formData.companyName.toLowerCase().replace(/\s+/g, '-') + '-pitch';
 
-    // FIX 2: Use local variables to track Supabase credentials through the async flow
+    // Use local variables to track credentials through the async flow
+    // (React setState is async, so formData wouldn't have updated values when passed later)
     let supabaseUrl = '';
     let supabaseAnonKey = '';
     let supabaseServiceKey = '';
     let supabaseProjectId = '';
+
+    // FIX: Also track extracted colors in local variable to ensure they're passed to GitHub
+    let extractedColors = formData.extractedColors;
+    let extractedThesis = formData.extractedThesis;
 
     // Step 1: Supabase
     setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
@@ -139,7 +143,6 @@ export default function SetupWizard() {
       });
       if (res.ok) {
         const data = await res.json();
-        // FIX 3: Capture ALL credentials from Supabase response
         supabaseUrl = data.url;
         supabaseAnonKey = data.anonKey;
         supabaseServiceKey = data.serviceKey;
@@ -149,8 +152,8 @@ export default function SetupWizard() {
           ...prev,
           supabaseUrl: data.url,
           supabaseProjectId: data.projectId,
-          supabaseAnonKey: data.anonKey,        // ← ADDED
-          supabaseServiceKey: data.serviceKey,  // ← ADDED
+          supabaseAnonKey: data.anonKey,
+          supabaseServiceKey: data.serviceKey,
         }));
         setCreationStatus(prev => ({ ...prev, supabase: 'done' }));
       } else {
@@ -217,7 +220,20 @@ export default function SetupWizard() {
       });
       if (stylesRes.ok) {
         const data = await stylesRes.json();
-        setFormData(prev => ({ ...prev, extractedColors: data.theme?.colors || prev.extractedColors }));
+        // FIX: Update LOCAL variable, not just React state
+        if (data.theme?.colors) {
+          extractedColors = data.theme.colors;
+          console.log('Extracted colors:', extractedColors);
+        }
+        if (data.thesis) {
+          extractedThesis = data.thesis;
+        }
+        // Also update UI state for review display
+        setFormData(prev => ({
+          ...prev,
+          extractedColors: data.theme?.colors || prev.extractedColors,
+          extractedThesis: data.thesis || prev.extractedThesis,
+        }));
       }
 
       // Extract logo
@@ -310,7 +326,8 @@ export default function SetupWizard() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           repoName: projectSlug,
-          formData,
+          // FIX: Pass formData with local extractedColors to ensure they're included
+          formData: { ...formData, extractedColors, extractedThesis },
           createdResources: {
             supabaseUrl,
             supabaseProjectId,
@@ -386,7 +403,8 @@ export default function SetupWizard() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           repoName: projectSlug,
-          formData,
+          // FIX: Pass formData with local extractedColors to ensure they're included
+          formData: { ...formData, extractedColors, extractedThesis },
           createdResources: {
             supabaseUrl,
             supabaseProjectId,
