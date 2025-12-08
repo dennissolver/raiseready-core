@@ -5,161 +5,155 @@ interface ExtractLogoRequest {
   websiteUrl: string;
 }
 
-interface LogoResult {
-  logoUrl: string | null;
-  logoBase64: string | null;
-  logoType: 'svg' | 'png' | 'jpg' | 'ico' | 'webp' | null;
-  source: string; // Where we found it
-  ogImageUrl: string | null;
-  ogImageBase64: string | null;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const body: ExtractLogoRequest = await req.json();
-    let { websiteUrl } = body;
+    const { websiteUrl } = body;
 
     if (!websiteUrl) {
       return NextResponse.json({ error: 'Website URL required' }, { status: 400 });
     }
 
-    // Ensure URL has protocol
-    if (!websiteUrl.startsWith('http')) {
-      websiteUrl = `https://${websiteUrl}`;
-    }
-
     console.log(`Extracting logo from: ${websiteUrl}`);
 
     // Fetch the website HTML
-    const response = await fetch(websiteUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; RaiseReady/1.0)',
-      },
-    });
-
-    if (!response.ok) {
-      return NextResponse.json({
-        error: `Failed to fetch website: ${response.status}`
-      }, { status: 400 });
+    let html = '';
+    try {
+      const response = await fetch(websiteUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+      });
+      html = await response.text();
+    } catch (err) {
+      console.error('Failed to fetch website:', err);
+      return NextResponse.json({ success: false, error: 'Failed to fetch website' }, { status: 500 });
     }
 
-    const html = await response.text();
     const $ = cheerio.load(html);
-    const baseUrl = new URL(websiteUrl).origin;
+    const baseUrl = new URL(websiteUrl);
 
-    // Try to find logo in order of preference
-    let logoUrl: string | null = null;
-    let source = '';
-
-    // 1. Look for explicit logo in header/nav
+    // Logo extraction with PRIORITY ORDER - header logos first!
+    // The key insight: header/nav logos should be found FIRST, before portfolio sections
     const logoSelectors = [
-      'header img[src*="logo"]',
-      'nav img[src*="logo"]',
-      '.logo img',
+      // HIGHEST PRIORITY: Header/Nav logos (these are the company's own logo)
+      'header a[href="/"] img',
+      'header a[href="./"] img',
+      'header .logo img',
+      'header img.logo',
+      'header [class*="brand"] img',
+      'header [class*="logo"] img:first-of-type',
+      'nav a[href="/"] img',
+      'nav a[href="./"] img',
+      'nav .logo img',
+      'nav img.logo',
+      'nav [class*="brand"] img',
+      'nav [class*="logo"] img:first-of-type',
+      '[role="banner"] img',
+      '.header [class*="logo"] img:first-of-type',
+      '.navbar [class*="logo"] img:first-of-type',
+
+      // HIGH PRIORITY: Top-level logo classes (often header area)
+      '.logo:first-of-type img',
+      '[class*="site-logo"] img',
+      '[class*="main-logo"] img',
       '#logo img',
-      'a[href="/"] img',
-      'header a img:first-of-type',
-      'nav a img:first-of-type',
-      '[class*="logo"] img',
-      '[id*="logo"] img',
+      '#site-logo img',
+
+      // MEDIUM PRIORITY: Link to home with image (common pattern)
+      'a[href="/"] img[src*="logo"]',
+      'a[href="/"] img[alt*="logo" i]',
+      'a[href="./"] img[src*="logo"]',
+      'a[href="./"] img[alt*="logo" i]',
+
+      // LOWER PRIORITY: General logo selectors (may match portfolio logos!)
+      // Only use these if nothing else matches
+      '[class*="logo"]:not([class*="portfolio"]):not([class*="company"]):not([class*="client"]) img:first-of-type',
+      'img[src*="logo"]:not([class*="portfolio"]):not([class*="company"])',
+      'img[alt*="logo" i]:first-of-type',
+
+      // SVG logos (often inline)
+      'header svg',
+      'nav svg',
+      '.logo svg',
     ];
 
-    for (const selector of logoSelectors) {
-      const img = $(selector).first();
-      if (img.length) {
-        logoUrl = img.attr('src') || null;
-        if (logoUrl) {
-          source = `selector: ${selector}`;
-          break;
-        }
-      }
-    }
-
-    // 2. Look for SVG logo
-    if (!logoUrl) {
-      const svgLogo = $('header svg, nav svg, .logo svg, [class*="logo"] svg').first();
-      if (svgLogo.length) {
-        // Get SVG as string
-        const svgHtml = $.html(svgLogo);
-        if (svgHtml) {
-          const svgBase64 = Buffer.from(svgHtml).toString('base64');
-          return NextResponse.json({
-            success: true,
-            logoUrl: null,
-            logoBase64: `data:image/svg+xml;base64,${svgBase64}`,
-            logoType: 'svg',
-            source: 'inline SVG',
-            ogImageUrl: null,
-            ogImageBase64: null,
-          });
-        }
-      }
-    }
-
-    // 3. Apple touch icon (usually high quality)
-    if (!logoUrl) {
-      const appleTouchIcon = $('link[rel="apple-touch-icon"]').attr('href');
-      if (appleTouchIcon) {
-        logoUrl = appleTouchIcon;
-        source = 'apple-touch-icon';
-      }
-    }
-
-    // 4. Favicon (last resort for logo)
-    if (!logoUrl) {
-      const favicon = $('link[rel="icon"]').attr('href') ||
-                      $('link[rel="shortcut icon"]').attr('href');
-      if (favicon) {
-        logoUrl = favicon;
-        source = 'favicon';
-      }
-    }
-
-    // 5. Get OG image for og-image.png
-    let ogImageUrl = $('meta[property="og:image"]').attr('content') ||
-                     $('meta[name="og:image"]').attr('content') ||
-                     $('meta[property="twitter:image"]').attr('content');
-
-    // Resolve relative URLs
-    if (logoUrl && !logoUrl.startsWith('http') && !logoUrl.startsWith('data:')) {
-      logoUrl = new URL(logoUrl, baseUrl).href;
-    }
-    if (ogImageUrl && !ogImageUrl.startsWith('http')) {
-      ogImageUrl = new URL(ogImageUrl, baseUrl).href;
-    }
-
-    // Download and convert logo to base64
+    let logoUrl: string | null = null;
     let logoBase64: string | null = null;
-    let logoType: 'svg' | 'png' | 'jpg' | 'ico' | 'webp' | null = null;
+    let logoType: string | null = null;
+    let matchedSelector: string | null = null;
 
+    // Try each selector in priority order
+    for (const selector of logoSelectors) {
+      const elements = $(selector);
+
+      // Check each matched element
+      for (let i = 0; i < elements.length; i++) {
+        const el = elements.eq(i);
+
+        // Skip if this looks like a portfolio/client logo
+        const parentClasses = el.parents().map((_, p) => $(p).attr('class') || '').get().join(' ').toLowerCase();
+        if (parentClasses.includes('portfolio') ||
+            parentClasses.includes('client') ||
+            parentClasses.includes('company-logo') ||
+            parentClasses.includes('partner') ||
+            parentClasses.includes('investment')) {
+          console.log(`Skipping potential portfolio logo with selector: ${selector}`);
+          continue;
+        }
+
+        let src: string | undefined;
+
+        // Handle img elements
+        if (el.is('img')) {
+          src = el.attr('src') || el.attr('data-src') || el.attr('data-lazy-src');
+        }
+        // Handle SVG elements - skip for now, they're complex
+        else if (el.is('svg')) {
+          continue;
+        }
+
+        if (src) {
+          // Resolve relative URLs
+          try {
+            const fullUrl = new URL(src, baseUrl).href;
+            logoUrl = fullUrl;
+            matchedSelector = selector;
+            console.log(`Found logo with selector "${selector}": ${fullUrl}`);
+            break;
+          } catch {
+            continue;
+          }
+        }
+      }
+
+      if (logoUrl) break;
+    }
+
+    // If found, fetch and convert to base64
     if (logoUrl) {
       try {
-        const logoResponse = await fetch(logoUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RaiseReady/1.0)' },
-        });
-
+        const logoResponse = await fetch(logoUrl);
         if (logoResponse.ok) {
           const contentType = logoResponse.headers.get('content-type') || '';
           const buffer = await logoResponse.arrayBuffer();
           const base64 = Buffer.from(buffer).toString('base64');
 
+          // Determine logo type
           if (contentType.includes('svg')) {
             logoType = 'svg';
             logoBase64 = `data:image/svg+xml;base64,${base64}`;
           } else if (contentType.includes('png')) {
             logoType = 'png';
             logoBase64 = `data:image/png;base64,${base64}`;
-          } else if (contentType.includes('jpeg') || contentType.includes('jpg')) {
+          } else if (contentType.includes('jpg') || contentType.includes('jpeg')) {
             logoType = 'jpg';
             logoBase64 = `data:image/jpeg;base64,${base64}`;
           } else if (contentType.includes('webp')) {
             logoType = 'webp';
             logoBase64 = `data:image/webp;base64,${base64}`;
-          } else if (contentType.includes('ico') || logoUrl.endsWith('.ico')) {
-            logoType = 'ico';
-            logoBase64 = `data:image/x-icon;base64,${base64}`;
           } else {
-            // Try to detect from URL
+            // Guess from URL
             if (logoUrl.endsWith('.svg')) {
               logoType = 'svg';
               logoBase64 = `data:image/svg+xml;base64,${base64}`;
@@ -167,43 +161,46 @@ export async function POST(req: NextRequest) {
               logoType = 'png';
               logoBase64 = `data:image/png;base64,${base64}`;
             } else {
-              logoType = 'png'; // Default assumption
+              logoType = 'png';
               logoBase64 = `data:image/png;base64,${base64}`;
             }
           }
         }
       } catch (err) {
-        console.warn('Failed to download logo:', err);
+        console.error('Failed to fetch logo:', err);
       }
     }
 
-    // Download OG image
+    // Extract OG image as fallback/additional branding
+    let ogImageUrl: string | null = null;
     let ogImageBase64: string | null = null;
-    if (ogImageUrl) {
-      try {
-        const ogResponse = await fetch(ogImageUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RaiseReady/1.0)' },
-        });
 
+    const ogImage = $('meta[property="og:image"]').attr('content') ||
+                   $('meta[name="og:image"]').attr('content') ||
+                   $('meta[property="twitter:image"]').attr('content');
+
+    if (ogImage) {
+      try {
+        ogImageUrl = new URL(ogImage, baseUrl).href;
+
+        const ogResponse = await fetch(ogImageUrl);
         if (ogResponse.ok) {
-          const contentType = ogResponse.headers.get('content-type') || 'image/png';
           const buffer = await ogResponse.arrayBuffer();
           const base64 = Buffer.from(buffer).toString('base64');
+          const contentType = ogResponse.headers.get('content-type') || 'image/png';
           ogImageBase64 = `data:${contentType};base64,${base64}`;
         }
       } catch (err) {
-        console.warn('Failed to download OG image:', err);
+        console.error('Failed to fetch OG image:', err);
       }
     }
-
-    console.log(`Logo found: ${source || 'not found'}`);
 
     return NextResponse.json({
       success: true,
       logoUrl,
       logoBase64,
       logoType,
-      source,
+      source: matchedSelector ? `selector: ${matchedSelector}` : 'not found',
       ogImageUrl,
       ogImageBase64,
     });
@@ -211,6 +208,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Extract logo error:', error);
     return NextResponse.json({
+      success: false,
       error: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }

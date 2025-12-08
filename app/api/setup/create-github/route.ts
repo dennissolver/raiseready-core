@@ -2,6 +2,49 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const GITHUB_API = 'https://api.github.com';
 
+// ============================================================================
+// COLOR VALIDATION HELPERS - Added to prevent invalid color values in config
+// ============================================================================
+
+// Default colors for when extraction fails or returns invalid values
+const DEFAULT_COLORS = {
+  primary: '#3B82F6',    // Blue
+  accent: '#10B981',     // Green
+  background: '#0F172A', // Dark slate
+};
+
+// Validate hex color - must be #XXXXXX format
+function isValidHexColor(color: string): boolean {
+  return /^#[0-9A-Fa-f]{6}$/.test(color);
+}
+
+// Ensure we always return valid hex colors - CRITICAL for config generation
+function sanitizeColor(color: string | undefined, fallback: string): string {
+  if (!color) return fallback;
+  const trimmed = color.trim();
+
+  // If it's already a valid 6-char hex
+  if (isValidHexColor(trimmed)) return trimmed;
+
+  // If it's a 3-char hex, expand it
+  if (/^#[0-9A-Fa-f]{3}$/.test(trimmed)) {
+    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`;
+  }
+
+  // If it's missing the #, add it
+  if (/^[0-9A-Fa-f]{6}$/.test(trimmed)) {
+    return `#${trimmed}`;
+  }
+
+  // If it contains any non-hex characters (like "Unable to confirm"), return fallback
+  console.warn(`Invalid color value "${color}", using fallback "${fallback}"`);
+  return fallback;
+}
+
+// ============================================================================
+// INTERFACES
+// ============================================================================
+
 interface CreateGithubRequest {
   repoName: string;
   formData: {
@@ -49,8 +92,9 @@ export async function POST(req: NextRequest) {
     }
 
     const token = process.env.GITHUB_TOKEN;
+    const templateOwner = process.env.GITHUB_TEMPLATE_OWNER || 'dennissolver';
+    const templateRepo = process.env.GITHUB_TEMPLATE_REPO || 'RaiseReadyTemplate';
     const owner = process.env.GITHUB_OWNER || 'dennissolver';
-    const templateRepo = process.env.GITHUB_TEMPLATE_REPO || 'raiseready-template';
 
     if (!token) {
       return NextResponse.json({ error: 'GitHub token not configured' }, { status: 500 });
@@ -59,224 +103,191 @@ export async function POST(req: NextRequest) {
     const headers = {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
     };
 
-    let repoUrl = `https://github.com/${owner}/${repoName}`;
-    let repoFullName = `${owner}/${repoName}`;
-    let repoExists = false;
+    let repoCreated = false;
 
-    // If pushConfigOnly, skip straight to config update
+    // Skip repo creation if pushConfigOnly is true
     if (!pushConfigOnly) {
-      // Step 1: Check if repo already exists
-      console.log(`Checking for existing repo: ${owner}/${repoName}`);
+      // Step 1: Create repo from template
+      console.log(`Creating repo ${owner}/${repoName} from template ${templateOwner}/${templateRepo}...`);
 
-      const checkResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}`, { headers });
+      const createResponse = await fetch(`${GITHUB_API}/repos/${templateOwner}/${templateRepo}/generate`, {
+        method: 'POST',
+        headers: { ...headers, 'Accept': 'application/vnd.github.baptiste-preview+json' },
+        body: JSON.stringify({
+          owner,
+          name: repoName,
+          description: `White-label pitch coaching platform for ${formData.companyName}`,
+          private: false,
+          include_all_branches: false,
+        }),
+      });
 
-      if (checkResponse.ok) {
-        const existingRepo = await checkResponse.json();
-        console.log(`Repo already exists: ${existingRepo.html_url}`);
-        repoUrl = existingRepo.html_url;
-        repoFullName = existingRepo.full_name;
-        repoExists = true;
-      } else {
-        // Step 2: Create repo from template
-        console.log(`Creating GitHub repo: ${repoName} from template ${templateRepo}`);
-
-        const createResponse = await fetch(`${GITHUB_API}/repos/${owner}/${templateRepo}/generate`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            owner,
-            name: repoName,
-            description: `${formData.companyName} Pitch Coaching Platform`,
-            private: true,
-            include_all_branches: false,
-          }),
-        });
-
-        if (!createResponse.ok) {
-          const error = await createResponse.text();
-          console.error('GitHub create error:', error);
-          return NextResponse.json({ error: `Failed to create repo: ${error}` }, { status: 500 });
+      if (!createResponse.ok) {
+        const error = await createResponse.json();
+        // If repo already exists, that's okay for pushConfigOnly scenarios
+        if (error.message?.includes('already exists')) {
+          console.log('Repository already exists, continuing...');
+        } else {
+          console.error('Failed to create repo:', error);
+          return NextResponse.json({ error: error.message || 'Failed to create repository' }, { status: 400 });
         }
-
-        const repo = await createResponse.json();
-        console.log('Repo created:', repo.full_name);
-        repoUrl = repo.html_url;
-        repoFullName = repo.full_name;
-
-        // Wait for repo to initialize
-        await sleep(5000);
+      } else {
+        repoCreated = true;
+        console.log('Repository created successfully');
       }
-    } else {
-      // pushConfigOnly mode - repo should already exist
-      console.log(`Push config only mode for: ${owner}/${repoName}`);
-      repoExists = true;
+
+      // Wait for repo to be ready
+      await sleep(3000);
     }
 
-    // Skip config update if requested (first phase of two-phase creation)
+    // Skip config update if skipConfigUpdate is true
     if (skipConfigUpdate) {
-      console.log('Skipping config update (skipConfigUpdate=true)');
       return NextResponse.json({
         success: true,
-        repoUrl,
-        repoFullName,
+        repoFullName: `${owner}/${repoName}`,
+        repoUrl: `https://github.com/${owner}/${repoName}`,
         cloneUrl: `https://github.com/${owner}/${repoName}.git`,
         configUpdated: false,
         phase: 'repo-created',
       });
     }
 
-    // Step 3: Update config/client.ts to trigger Vercel deploy
-    console.log('Updating config to trigger deployment...');
+    // Step 2: Get current file SHA (needed for updates)
+    const configPath = 'config/client.ts';
+    let fileSha: string | undefined;
 
-    const clientConfig = generateClientConfig(formData, createdResources, repoName);
-
-    // Get current file SHA
-    let attempts = 0;
-    let fileUpdated = false;
-
-    while (attempts < 5 && !fileUpdated) {
-      attempts++;
-      await sleep(2000);
-
-      try {
-        const getFileResponse = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repoName}/contents/config/client.ts`,
-          { headers }
-        );
-
-        if (getFileResponse.ok) {
-          const fileData = await getFileResponse.json();
-
-          const updateResponse = await fetch(
-            `${GITHUB_API}/repos/${owner}/${repoName}/contents/config/client.ts`,
-            {
-              method: 'PUT',
-              headers,
-              body: JSON.stringify({
-                message: `Configure platform for ${formData.companyName}`,
-                content: Buffer.from(clientConfig).toString('base64'),
-                sha: fileData.sha,
-              }),
-            }
-          );
-
-          if (updateResponse.ok) {
-            console.log('Config updated - this will trigger Vercel deployment');
-            fileUpdated = true;
-          } else {
-            console.warn('Update attempt failed, retrying...');
-          }
-        }
-      } catch (err) {
-        console.warn(`Attempt ${attempts} failed:`, err);
+    try {
+      const fileResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${configPath}`, {
+        headers,
+      });
+      if (fileResponse.ok) {
+        const fileData = await fileResponse.json();
+        fileSha = fileData.sha;
       }
+    } catch {
+      console.log('Config file does not exist yet, will create');
     }
 
+    // Step 3: Generate and push client config
+    const configContent = generateClientConfig(formData, createdResources, repoName);
+    const encodedContent = Buffer.from(configContent).toString('base64');
+
+    const updateResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${configPath}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `Configure platform for ${formData.companyName}`,
+        content: encodedContent,
+        sha: fileSha,
+        branch: 'main',
+      }),
+    });
+
+    const fileUpdated = updateResponse.ok;
     if (!fileUpdated) {
-      console.warn('Could not update config file - manual push may be needed');
+      const error = await updateResponse.json();
+      console.error('Failed to update config:', error);
     }
 
-    // Step 4: Push logo files if provided
+    // Step 4: Upload logo files if provided
     let logoUpdated = false;
+    let ogImageUpdated = false;
+
     if (logoData?.logoBase64) {
-      console.log('Pushing logo files...');
+      // Determine file extension
+      const logoExt = logoData.logoType === 'svg' ? 'svg' :
+                     logoData.logoType === 'png' ? 'png' :
+                     logoData.logoType === 'jpg' ? 'jpg' : 'png';
 
-      try {
-        // Extract the actual base64 data (remove data:image/xxx;base64, prefix)
-        const logoBase64Clean = logoData.logoBase64.replace(/^data:image\/\w+;base64,/, '');
+      // Upload as both light and dark versions
+      for (const variant of ['light', 'dark']) {
+        const logoPath = `public/logo-${variant}.${logoExt}`;
 
-        // Determine file extension
-        const logoExt = logoData.logoType === 'svg' ? 'svg' : 'png';
-        const logoPath = `public/images/logo.${logoExt}`;
-
-        // Try to get existing file SHA
-        const getLogoResponse = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`,
-          { headers }
-        );
-
-        const logoPayload: any = {
-          message: `Add ${formData.companyName} logo`,
-          content: logoBase64Clean,
-        };
-
-        if (getLogoResponse.ok) {
-          const existingFile = await getLogoResponse.json();
-          logoPayload.sha = existingFile.sha;
-        }
-
-        const pushLogoResponse = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`,
-          {
-            method: 'PUT',
+        // Get existing file SHA if it exists
+        let logoSha: string | undefined;
+        try {
+          const logoFileResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`, {
             headers,
-            body: JSON.stringify(logoPayload),
+          });
+          if (logoFileResponse.ok) {
+            const logoFileData = await logoFileResponse.json();
+            logoSha = logoFileData.sha;
           }
-        );
-
-        if (pushLogoResponse.ok) {
-          console.log(`Logo pushed to ${logoPath}`);
-          logoUpdated = true;
-        } else {
-          console.warn('Failed to push logo:', await pushLogoResponse.text());
+        } catch {
+          // File doesn't exist, that's fine
         }
-      } catch (err) {
-        console.warn('Logo push error:', err);
+
+        // Extract base64 data (remove data URL prefix if present)
+        const base64Data = logoData.logoBase64.includes(',')
+          ? logoData.logoBase64.split(',')[1]
+          : logoData.logoBase64;
+
+        const logoUpdateResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${logoPath}`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({
+            message: `Add ${variant} logo for ${formData.companyName}`,
+            content: base64Data,
+            sha: logoSha,
+            branch: 'main',
+          }),
+        });
+
+        if (logoUpdateResponse.ok) {
+          logoUpdated = true;
+          console.log(`Logo uploaded: ${logoPath}`);
+        } else {
+          const error = await logoUpdateResponse.json();
+          console.error(`Failed to upload logo ${logoPath}:`, error);
+        }
       }
     }
 
-    // Step 5: Push OG image if provided
-    let ogImageUpdated = false;
+    // Upload OG image if provided
     if (logoData?.ogImageBase64) {
-      console.log('Pushing OG image...');
+      const ogPath = 'public/og-image.png';
 
+      let ogSha: string | undefined;
       try {
-        const ogBase64Clean = logoData.ogImageBase64.replace(/^data:image\/\w+;base64,/, '');
-        const ogPath = 'public/images/og-image.png';
-
-        // Try to get existing file SHA
-        const getOgResponse = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`,
-          { headers }
-        );
-
-        const ogPayload: any = {
-          message: `Add ${formData.companyName} OG image`,
-          content: ogBase64Clean,
-        };
-
-        if (getOgResponse.ok) {
-          const existingFile = await getOgResponse.json();
-          ogPayload.sha = existingFile.sha;
+        const ogFileResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`, {
+          headers,
+        });
+        if (ogFileResponse.ok) {
+          const ogFileData = await ogFileResponse.json();
+          ogSha = ogFileData.sha;
         }
+      } catch {
+        // File doesn't exist
+      }
 
-        const pushOgResponse = await fetch(
-          `${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`,
-          {
-            method: 'PUT',
-            headers,
-            body: JSON.stringify(ogPayload),
-          }
-        );
+      const base64Data = logoData.ogImageBase64.includes(',')
+        ? logoData.ogImageBase64.split(',')[1]
+        : logoData.ogImageBase64;
 
-        if (pushOgResponse.ok) {
-          console.log('OG image pushed');
-          ogImageUpdated = true;
-        } else {
-          console.warn('Failed to push OG image:', await pushOgResponse.text());
-        }
-      } catch (err) {
-        console.warn('OG image push error:', err);
+      const ogUpdateResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/contents/${ogPath}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          message: `Add OG image for ${formData.companyName}`,
+          content: base64Data,
+          sha: ogSha,
+          branch: 'main',
+        }),
+      });
+
+      if (ogUpdateResponse.ok) {
+        ogImageUpdated = true;
+        console.log('OG image uploaded');
       }
     }
 
     return NextResponse.json({
       success: true,
-      repoUrl,
-      repoFullName,
+      repoFullName: `${owner}/${repoName}`,
+      repoUrl: `https://github.com/${owner}/${repoName}`,
       cloneUrl: `https://github.com/${owner}/${repoName}.git`,
       configUpdated: fileUpdated,
       logoUpdated,
@@ -297,6 +308,19 @@ function generateClientConfig(
   resources: CreateGithubRequest['createdResources'],
   repoName: string
 ): string {
+  // =========================================================================
+  // FIX: Validate all colors BEFORE using them in the config template
+  // This prevents invalid values like "Unable to confirm from HTML" from
+  // being interpolated into the generated config file
+  // =========================================================================
+  const validatedColors = {
+    primary: sanitizeColor(formData.extractedColors?.primary, DEFAULT_COLORS.primary),
+    accent: sanitizeColor(formData.extractedColors?.accent, DEFAULT_COLORS.accent),
+    background: sanitizeColor(formData.extractedColors?.background, DEFAULT_COLORS.background),
+  };
+
+  console.log('Generating config with validated colors:', validatedColors);
+
   return `// config/client.ts
 // Auto-generated for: ${formData.companyName}
 // Generated: ${new Date().toISOString()}
@@ -326,16 +350,16 @@ export const clientConfig = {
   theme: {
     mode: "dark" as const,
     colors: {
-      primary: "${formData.extractedColors?.primary || '#3B82F6'}",
+      primary: "${validatedColors.primary}",
       primaryHover: "#2563EB",
-      accent: "${formData.extractedColors?.accent || '#10B981'}",
+      accent: "${validatedColors.accent}",
       accentHover: "#059669",
-      background: "${formData.extractedColors?.background || '#0F172A'}",
+      background: "${validatedColors.background}",
       surface: "#1E293B",
       text: "#F8FAFC",
       textMuted: "#94A3B8",
       border: "#334155",
-      gradient: { from: "${formData.extractedColors?.primary || '#3B82F6'}", via: "#0F172A", to: "${formData.extractedColors?.accent || '#10B981'}" },
+      gradient: { from: "${validatedColors.primary}", via: "#0F172A", to: "${validatedColors.accent}" },
       success: "#22C55E",
       warning: "#F59E0B",
       error: "#EF4444",
