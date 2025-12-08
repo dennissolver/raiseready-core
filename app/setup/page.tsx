@@ -15,7 +15,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 
 // ============================================================================
 // TYPES
@@ -732,40 +731,48 @@ export default function SetupWizard() {
         <CardDescription>Choose the AI model that powers analysis and coaching</CardDescription>
       </CardHeader>
       <CardContent>
-        <RadioGroup value={formData.llmProvider} onValueChange={(v) => updateForm('llmProvider', v)}>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { value: 'claude', label: 'Claude (Anthropic)', description: 'Recommended - Best for nuanced analysis', badge: 'Recommended' },
-              { value: 'chatgpt', label: 'ChatGPT (OpenAI)', description: 'Popular choice with broad capabilities', badge: null },
-              { value: 'gemini', label: 'Gemini (Google)', description: 'Strong multimodal capabilities', badge: null },
-              { value: 'grok', label: 'Grok (xAI)', description: 'Real-time information access', badge: null },
-            ].map((option) => (
-              <label
-                key={option.value}
-                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+        <div className="grid grid-cols-2 gap-4">
+          {[
+            { value: 'claude', label: 'Claude (Anthropic)', description: 'Recommended - Best for nuanced analysis', badge: 'Recommended' },
+            { value: 'chatgpt', label: 'ChatGPT (OpenAI)', description: 'Popular choice with broad capabilities', badge: null },
+            { value: 'gemini', label: 'Gemini (Google)', description: 'Strong multimodal capabilities', badge: null },
+            { value: 'grok', label: 'Grok (xAI)', description: 'Real-time information access', badge: null },
+          ].map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => updateForm('llmProvider', option.value)}
+              className={`p-4 rounded-lg border-2 cursor-pointer transition-all text-left ${
+                formData.llmProvider === option.value 
+                  ? 'border-blue-500 bg-blue-500/10' 
+                  : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`w-4 h-4 mt-1 rounded-full border-2 flex items-center justify-center ${
                   formData.llmProvider === option.value 
-                    ? 'border-blue-500 bg-blue-500/10' 
-                    : 'border-slate-700 bg-slate-800/50 hover:border-slate-600'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <RadioGroupItem value={option.value} className="mt-1" />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-white">{option.label}</span>
-                      {option.badge && (
-                        <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-300 rounded-full">
-                          {option.badge}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-400 mt-1">{option.description}</p>
-                  </div>
+                    ? 'border-blue-500 bg-blue-500' 
+                    : 'border-gray-500'
+                }`}>
+                  {formData.llmProvider === option.value && (
+                    <div className="w-2 h-2 rounded-full bg-white" />
+                  )}
                 </div>
-              </label>
-            ))}
-          </div>
-        </RadioGroup>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-white">{option.label}</span>
+                    {option.badge && (
+                      <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-300 rounded-full">
+                        {option.badge}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-400 mt-1">{option.description}</p>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
       </CardContent>
     </Card>
   );
