@@ -368,35 +368,288 @@ export default function SetupWizard() {
     }
   };
 
+// Replace the existing startCreation function (around line 371) with this:
+
   const startCreation = async () => {
     setStep('creating');
+    setError('');
     const projectSlug = formData.companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
-    // Creation logic would go here...
-    // For now, simulating the process
+    // Build platform-specific config to pass to APIs
+    const platformConfig = {
+      platformType: formData.platformType,
+      platformMode: selectedPlatform?.mode || 'screening',
+      usesSDGFramework: formData.platformType === 'impact_investor',
+      usesImpactScoring: formData.platformType === 'impact_investor',
+      usesFitScoring: formData.platformType !== 'founder_service_provider',
+      usesPitchCoaching: true,
+      usesInvestorMatching: formData.platformType !== 'founder_service_provider',
 
-    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+      // Type-specific configs
+      ...(formData.platformType === 'impact_investor' && {
+        prioritySdgs: formData.prioritySdgs,
+        targetFinancialReturn: formData.targetFinancialReturn,
+        targetImpactReturn: formData.targetImpactReturn,
+      }),
+      ...(formData.platformType === 'family_office' && {
+        investmentHorizon: formData.investmentHorizon,
+        familyMission: formData.familyMission,
+        legacyPriorities: formData.legacyPriorities,
+        reputationSensitivity: formData.reputationSensitivity,
+        decisionMakerType: formData.decisionMakerType,
+        involvementLevel: formData.involvementLevel,
+        acceptsBelowMarketReturns: formData.acceptsBelowMarketReturns,
+        riskTolerance: formData.riskTolerance,
+      }),
+      ...(formData.platformType === 'founder_service_provider' && {
+        serviceProviderType: formData.serviceProviderType,
+        targetClientStages: formData.targetClientStages,
+        targetClientSectors: formData.targetClientSectors,
+        coachingFocusAreas: formData.coachingFocusAreas,
+        referralTrackingEnabled: formData.referralTrackingEnabled,
+      }),
+      ...(formData.platformType === 'commercial_investor' && {
+        targetClientStages: formData.targetClientStages,
+        targetClientSectors: formData.targetClientSectors,
+        minimumRevenue: formData.minimumRevenue,
+        preferredGrowthRate: formData.preferredGrowthRate,
+      }),
+    };
 
-    setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
-    await delay(2000);
-    setCreationStatus(prev => ({ ...prev, supabase: 'done', elevenlabs: 'creating' }));
-    await delay(1500);
-    setCreationStatus(prev => ({ ...prev, elevenlabs: 'done', github: 'creating' }));
-    await delay(2000);
-    setCreationStatus(prev => ({ ...prev, github: 'done', vercel: 'creating' }));
-    await delay(1500);
-    setCreationStatus(prev => ({ ...prev, vercel: 'done', deployment: 'creating' }));
-    await delay(2000);
-    setCreationStatus(prev => ({ ...prev, deployment: 'done' }));
+    // Local variables to store values (React state updates are async)
+    let supabaseUrl = '';
+    let supabaseProjectId = '';
+    let supabaseAnonKey = '';
+    let supabaseServiceKey = '';
+    let elevenlabsAgentId = '';
+    let githubRepoUrl = '';
+    let githubRepoName = '';
+    let vercelUrl = '';
+    let vercelProjectId = '';
 
-    setCreatedResources({
-      supabaseUrl: `https://${projectSlug}.supabase.co`,
-      supabaseProjectId: 'proj_xxx',
-      vercelUrl: `https://${projectSlug}.vercel.app`,
-      vercelProjectId: 'prj_xxx',
-      elevenlabsAgentId: 'agent_xxx',
-      githubRepo: `https://github.com/raiseready/${projectSlug}`,
-    });
+    try {
+      // ========== Step 1: Create Supabase Project ==========
+      setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
+      console.log('Creating Supabase project...');
+
+      const supabaseRes = await fetch('/api/setup/create-supabase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName: projectSlug }),
+      });
+
+      if (!supabaseRes.ok) {
+        const err = await supabaseRes.json();
+        throw new Error(`Supabase: ${err.error || 'Failed to create project'}`);
+      }
+
+      const supabaseData = await supabaseRes.json();
+      supabaseUrl = supabaseData.url;
+      supabaseProjectId = supabaseData.projectId;
+      supabaseAnonKey = supabaseData.anonKey;
+      supabaseServiceKey = supabaseData.serviceKey;
+
+      setCreatedResources(prev => ({
+        ...prev,
+        supabaseUrl,
+        supabaseProjectId,
+      }));
+      console.log('Supabase project created:', supabaseProjectId);
+
+      // Run migration
+      console.log('Running migration...');
+      try {
+        await fetch('/api/setup/run-migration', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectRef: supabaseProjectId,
+            serviceKey: supabaseServiceKey,
+            platformConfig,
+          }),
+        });
+      } catch (migrationErr) {
+        console.warn('Migration warning:', migrationErr);
+      }
+
+      setCreationStatus(prev => ({ ...prev, supabase: 'done', elevenlabs: 'creating' }));
+
+      // ========== Step 2: Create ElevenLabs Agent ==========
+      console.log('Creating ElevenLabs agent...');
+
+      const elevenlabsRes = await fetch('/api/setup/create-elevenlabs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentName: formData.agentName,
+          voiceGender: formData.voiceGender,
+          voiceLanguage: formData.voiceLanguage,
+          voiceType: formData.voiceType,
+          companyName: formData.companyName,
+          platformType: formData.platformType,
+        }),
+      });
+
+      if (elevenlabsRes.ok) {
+        const elevenlabsData = await elevenlabsRes.json();
+        elevenlabsAgentId = elevenlabsData.agentId;
+        setCreatedResources(prev => ({ ...prev, elevenlabsAgentId }));
+        console.log('ElevenLabs agent created:', elevenlabsAgentId);
+      } else {
+        console.warn('ElevenLabs creation failed, using default agent');
+        elevenlabsAgentId = process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID || '';
+      }
+
+      setCreationStatus(prev => ({ ...prev, elevenlabs: 'done', github: 'creating' }));
+
+      // ========== Step 3: Create GitHub Repository ==========
+      console.log('Creating GitHub repository...');
+
+      const githubRes = await fetch('/api/setup/create-github', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoName: projectSlug,
+          companyName: formData.companyName,
+          companyWebsite: formData.companyWebsite,
+          extractedColors: formData.extractedColors,
+          extractedThesis: formData.extractedThesis,
+          agentId: elevenlabsAgentId,
+          supabaseUrl,
+          supabaseAnonKey,
+          platformConfig,
+          llmProvider: formData.llmProvider,
+        }),
+      });
+
+      if (!githubRes.ok) {
+        const err = await githubRes.json();
+        throw new Error(`GitHub: ${err.error || 'Failed to create repository'}`);
+      }
+
+      const githubData = await githubRes.json();
+      githubRepoUrl = githubData.repoUrl;
+      githubRepoName = githubData.repoName || projectSlug;
+
+      setCreatedResources(prev => ({ ...prev, githubRepo: githubRepoUrl }));
+      console.log('GitHub repo created:', githubRepoUrl);
+
+      setCreationStatus(prev => ({ ...prev, github: 'done', vercel: 'creating' }));
+
+      // ========== Step 4: Create Vercel Project ==========
+      console.log('Creating Vercel project...');
+
+      const vercelRes = await fetch('/api/setup/create-vercel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectName: projectSlug,
+          repoName: githubRepoName,
+          framework: 'nextjs',
+          envVars: {
+            NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+            NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
+            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,
+            ELEVENLABS_AGENT_ID: elevenlabsAgentId,
+            NEXT_PUBLIC_PLATFORM_TYPE: formData.platformType,
+            NEXT_PUBLIC_COMPANY_NAME: formData.companyName,
+          },
+        }),
+      });
+
+      if (!vercelRes.ok) {
+        const err = await vercelRes.json();
+        throw new Error(`Vercel: ${err.error || 'Failed to create project'}`);
+      }
+
+      const vercelData = await vercelRes.json();
+      vercelUrl = vercelData.url || `https://${projectSlug}.vercel.app`;
+      vercelProjectId = vercelData.projectId;
+
+      setCreatedResources(prev => ({
+        ...prev,
+        vercelUrl,
+        vercelProjectId,
+      }));
+      console.log('Vercel project created:', vercelUrl);
+
+      setCreationStatus(prev => ({ ...prev, vercel: 'done', deployment: 'creating' }));
+
+      // ========== Step 5: Configure Auth & Create Admin ==========
+      console.log('Configuring Supabase auth...');
+
+      // Configure auth redirect URLs
+      try {
+        await fetch('/api/setup/configure-supabase-auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectRef: supabaseProjectId,
+            siteUrl: vercelUrl,
+          }),
+        });
+      } catch (authErr) {
+        console.warn('Auth config warning:', authErr);
+      }
+
+      // Create admin user
+      console.log('Creating admin user...');
+      try {
+        await fetch('/api/setup/create-admin-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supabaseUrl,
+            serviceKey: supabaseServiceKey,
+            email: formData.adminEmail,
+            firstName: formData.adminFirstName,
+            lastName: formData.adminLastName,
+            companyName: formData.companyName,
+            platformType: formData.platformType,
+          }),
+        });
+      } catch (adminErr) {
+        console.warn('Admin creation warning:', adminErr);
+      }
+
+      // Send welcome email
+      console.log('Sending welcome email...');
+      try {
+        await fetch('/api/setup/send-welcome-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: formData.adminEmail,
+            firstName: formData.adminFirstName,
+            companyName: formData.companyName,
+            platformUrl: vercelUrl,
+            platformType: formData.platformType,
+          }),
+        });
+      } catch (emailErr) {
+        console.warn('Email warning:', emailErr);
+      }
+
+      setCreationStatus(prev => ({ ...prev, deployment: 'done' }));
+      console.log('✅ Platform creation complete!');
+
+    } catch (error: any) {
+      console.error('Creation failed:', error);
+      setError(error.message || 'Failed to create platform. Check console for details.');
+
+      // Mark current step as error
+      setCreationStatus(prev => {
+        const newStatus = { ...prev };
+        const steps: (keyof CreationStatus)[] = ['supabase', 'elevenlabs', 'github', 'vercel', 'deployment'];
+        for (const step of steps) {
+          if (newStatus[step] === 'creating') {
+            newStatus[step] = 'error';
+            break;
+          }
+        }
+        return newStatus;
+      });
+    }
   };
 
   // --------------------------------------------------------------------------
