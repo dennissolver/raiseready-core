@@ -1,14 +1,20 @@
-'use client';
+// app/page.tsx
+// ============================================================================
+// UNIFIED LANDING PAGE
+// - Master platform (RaiseReady Impact) → Shows 4-type selector
+// - White-label deployments → Shows customized landing from clientConfig
+// ============================================================================
 
 import Link from 'next/link';
-import {
-  Heart, TrendingUp, Users, GraduationCap,
-  ArrowRight, Sparkles, Zap, Globe, Shield
-} from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  ArrowRight, Mic, FileText, Target, Sparkles, Brain, TrendingUp,
+  Heart, Users, GraduationCap, Zap, Globe, Shield
+} from 'lucide-react';
+import { clientConfig } from '@/config/client';
 
 // ============================================================================
-// PLATFORM TYPE DEFINITIONS
+// MASTER PLATFORM TYPES (for 4-type selector)
 // ============================================================================
 
 const PLATFORM_TYPES = [
@@ -20,7 +26,6 @@ const PLATFORM_TYPES = [
     icon: Heart,
     gradient: 'from-emerald-500 to-teal-600',
     hoverGradient: 'hover:from-emerald-600 hover:to-teal-700',
-    bgGlow: 'bg-emerald-500/20',
     features: [
       'SDG Alignment Scoring',
       'Blended Returns Calculator',
@@ -38,7 +43,6 @@ const PLATFORM_TYPES = [
     icon: TrendingUp,
     gradient: 'from-purple-500 to-violet-600',
     hoverGradient: 'hover:from-purple-600 hover:to-violet-700',
-    bgGlow: 'bg-purple-500/20',
     features: [
       'Growth Metrics Analysis',
       'Financial Health Scoring',
@@ -56,7 +60,6 @@ const PLATFORM_TYPES = [
     icon: Users,
     gradient: 'from-blue-500 to-indigo-600',
     hoverGradient: 'hover:from-blue-600 hover:to-indigo-700',
-    bgGlow: 'bg-blue-500/20',
     features: [
       'Values Alignment Scoring',
       'Legacy Priority Matching',
@@ -74,7 +77,6 @@ const PLATFORM_TYPES = [
     icon: GraduationCap,
     gradient: 'from-amber-500 to-orange-600',
     hoverGradient: 'hover:from-amber-600 hover:to-orange-700',
-    bgGlow: 'bg-amber-500/20',
     features: [
       'Pitch Quality Scoring',
       'AI Coaching Sessions',
@@ -82,15 +84,15 @@ const PLATFORM_TYPES = [
       'Client Portfolio Management',
     ],
     founderType: 'Your Startup Clients',
-    investorType: null, // No investor side
+    investorType: null,
   },
 ];
 
 // ============================================================================
-// COMPONENT
+// MASTER PLATFORM SELECTOR COMPONENT
 // ============================================================================
 
-export default function MasterLandingPage() {
+function MasterPlatformSelector() {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       {/* Navigation */}
@@ -172,7 +174,6 @@ export default function MasterLandingPage() {
                   className="group"
                 >
                   <div className="h-full p-8 bg-slate-900 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/5">
-                    {/* Header */}
                     <div className="flex items-start gap-4 mb-6">
                       <div className={`p-4 rounded-xl bg-gradient-to-br ${platform.gradient} ${platform.hoverGradient} transition-all group-hover:scale-110`}>
                         <Icon className="w-8 h-8 text-white" />
@@ -185,12 +186,10 @@ export default function MasterLandingPage() {
                       </div>
                     </div>
 
-                    {/* Description */}
                     <p className="text-gray-300 mb-6">
                       {platform.description}
                     </p>
 
-                    {/* Features */}
                     <div className="grid grid-cols-2 gap-2 mb-6">
                       {platform.features.map((feature, i) => (
                         <div key={i} className="flex items-center gap-2 text-sm text-gray-400">
@@ -200,7 +199,6 @@ export default function MasterLandingPage() {
                       ))}
                     </div>
 
-                    {/* User Types */}
                     <div className="flex flex-wrap gap-3 mb-6">
                       <span className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
                         👤 {platform.founderType}
@@ -217,10 +215,9 @@ export default function MasterLandingPage() {
                       )}
                     </div>
 
-                    {/* CTA */}
                     <div className={`flex items-center gap-2 text-transparent bg-gradient-to-r ${platform.gradient} bg-clip-text font-semibold group-hover:gap-4 transition-all`}>
                       Create {platform.title} Platform
-                      <ArrowRight className={`w-5 h-5 text-gray-400 group-hover:translate-x-2 transition-transform`} />
+                      <ArrowRight className="w-5 h-5 text-gray-400 group-hover:translate-x-2 transition-transform" />
                     </div>
                   </div>
                 </Link>
@@ -244,26 +241,10 @@ export default function MasterLandingPage() {
 
           <div className="grid md:grid-cols-4 gap-8">
             {[
-              {
-                step: '1',
-                title: 'Choose Type',
-                description: 'Select the platform type that matches your investment approach or service model.',
-              },
-              {
-                step: '2',
-                title: 'Enter Details',
-                description: 'Add your company info, branding, and we\'ll extract your thesis from your website.',
-              },
-              {
-                step: '3',
-                title: 'Configure AI',
-                description: 'Set up your AI voice coach personality and scoring criteria.',
-              },
-              {
-                step: '4',
-                title: 'Go Live',
-                description: 'We create your Supabase, GitHub, Vercel, and ElevenLabs resources automatically.',
-              },
+              { step: '1', title: 'Choose Type', description: 'Select the platform type that matches your investment approach or service model.' },
+              { step: '2', title: 'Enter Details', description: "Add your company info, branding, and we'll extract your thesis from your website." },
+              { step: '3', title: 'Configure AI', description: 'Set up your AI voice coach personality and scoring criteria.' },
+              { step: '4', title: 'Go Live', description: 'We create your Supabase, GitHub, Vercel, and ElevenLabs resources automatically.' },
             ].map((item, index) => (
               <div key={index} className="text-center">
                 <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
@@ -281,28 +262,15 @@ export default function MasterLandingPage() {
       <section className="py-20 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              What You Get
-            </h2>
-            <p className="text-gray-400">
-              A complete, production-ready platform with everything configured
-            </p>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">What You Get</h2>
+            <p className="text-gray-400">A complete, production-ready platform with everything configured</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8">
             {[
-              {
-                title: 'Isolated Infrastructure',
-                items: ['Dedicated Supabase database', 'Private GitHub repository', 'Vercel deployment', 'Custom domain support'],
-              },
-              {
-                title: 'AI Coaching System',
-                items: ['Custom ElevenLabs voice agent', 'Pitch analysis engine', 'Discovery sessions', 'Practice simulations'],
-              },
-              {
-                title: 'Platform Features',
-                items: ['Founder portal', 'Investor dashboard', 'Deck upload & analysis', 'Progress tracking'],
-              },
+              { title: 'Isolated Infrastructure', items: ['Dedicated Supabase database', 'Private GitHub repository', 'Vercel deployment', 'Custom domain support'] },
+              { title: 'AI Coaching System', items: ['Custom ElevenLabs voice agent', 'Pitch analysis engine', 'Discovery sessions', 'Practice simulations'] },
+              { title: 'Platform Features', items: ['Founder portal', 'Investor dashboard', 'Deck upload & analysis', 'Progress tracking'] },
             ].map((column, i) => (
               <div key={i} className="p-6 bg-slate-900 rounded-xl border border-slate-800">
                 <h3 className="text-xl font-semibold mb-4">{column.title}</h3>
@@ -360,4 +328,273 @@ export default function MasterLandingPage() {
       </footer>
     </div>
   );
+}
+
+// ============================================================================
+// WHITE-LABEL LANDING PAGE COMPONENT
+// ============================================================================
+
+function WhiteLabelLanding() {
+  const companyName = clientConfig.company.name;
+  const tagline = clientConfig.company.tagline;
+  const websiteUrl = clientConfig.company.website;
+  const primaryColor = clientConfig.theme.colors.primary;
+
+  const heroHeadline = clientConfig.landing.hero.headline;
+  const heroSubHeadline = clientConfig.landing.hero.subHeadline;
+  const ctaText = clientConfig.landing.hero.ctaText;
+  const ctaLink = clientConfig.landing.hero.ctaLink;
+  const stats = clientConfig.landing.stats;
+  const valueProps = clientConfig.landing.valueProps;
+  const howItWorks = clientConfig.landing.howItWorks;
+  const footerDescription = clientConfig.footer.description;
+
+  const iconMap: Record<string, React.ReactNode> = {
+    Brain: <Brain className="w-7 h-7" style={{ color: primaryColor }} />,
+    Target: <Target className="w-7 h-7 text-purple-400" />,
+    TrendingUp: <TrendingUp className="w-7 h-7 text-green-400" />,
+    FileText: <FileText className="w-7 h-7" style={{ color: primaryColor }} />,
+    Mic: <Mic className="w-7 h-7 text-blue-400" />,
+    Users: <Users className="w-7 h-7" style={{ color: primaryColor }} />,
+    Shield: <Shield className="w-7 h-7" style={{ color: primaryColor }} />,
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white">
+      {/* Navigation */}
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-sm border-b border-white/10">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <Link href="/" className="text-2xl font-bold">
+            {companyName}
+          </Link>
+          <div className="hidden md:flex items-center gap-8">
+            <Link href={websiteUrl} className="text-sm text-gray-400 hover:text-white transition">
+              About Us
+            </Link>
+            <Link href="/login">
+              <Button variant="outline" className="border-white/20 text-white hover:bg-white/10">
+                Sign In
+              </Button>
+            </Link>
+            <Link href="/signup/founder">
+              <Button style={{ backgroundColor: primaryColor }} className="hover:opacity-90 text-white">
+                Get Started
+              </Button>
+            </Link>
+          </div>
+          <div className="md:hidden flex items-center gap-4">
+            <Link href="/login">
+              <Button variant="outline" size="sm" className="border-white/20 text-white">
+                Sign In
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-900/20 via-black to-purple-900/20" />
+        <div className="absolute inset-0 opacity-10" style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+        }} />
+
+        <div className="container mx-auto px-6 relative z-10">
+          <div className="max-w-4xl">
+            <p className="text-gray-400 mb-4 text-lg">{tagline}</p>
+            <h1 className="text-5xl md:text-7xl font-bold leading-tight mb-6">
+              {heroHeadline}
+            </h1>
+            <p className="text-xl text-gray-300 mb-8 max-w-2xl">
+              {heroSubHeadline}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Link href={ctaLink}>
+                <Button size="lg" style={{ backgroundColor: primaryColor }} className="hover:opacity-90 text-white px-8 py-6 text-lg">
+                  {ctaText}
+                  <ArrowRight className="ml-2 w-5 h-5" />
+                </Button>
+              </Link>
+              <Link href="/login">
+                <Button size="lg" variant="outline" className="border-white/30 text-white hover:bg-white/10 px-8 py-6 text-lg">
+                  Sign In to Dashboard
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {stats.length > 0 && (
+          <div className="absolute bottom-20 right-10 hidden lg:block">
+            <div className="bg-white/5 backdrop-blur-sm rounded-2xl p-6 border border-white/10">
+              <div className="text-4xl font-bold" style={{ color: primaryColor }}>{stats[1]?.value || stats[0]?.value}</div>
+              <div className="text-gray-400">{stats[1]?.label || stats[0]?.label}</div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Value Props */}
+      <section className="py-24 bg-gradient-to-b from-black to-gray-900">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl md:text-5xl font-bold mb-4">
+              Your Vision.<br />
+              Our Expertise.<br />
+              <span style={{ color: primaryColor }}>
+                Infinite Possibilities.
+              </span>
+            </h2>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+            {valueProps.map((prop, i) => (
+              <div key={i} className="bg-white/5 rounded-2xl p-8 border border-white/10 hover:border-white/30 transition">
+                <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-6" style={{ backgroundColor: `${primaryColor}20` }}>
+                  {iconMap[prop.icon] || <Brain className="w-7 h-7" style={{ color: primaryColor }} />}
+                </div>
+                <h3 className="text-xl font-semibold mb-3">{prop.title}</h3>
+                <p className="text-gray-400">{prop.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Stats Section */}
+      {stats.length > 0 && (
+        <section className="py-20 bg-gray-900">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+              {stats.map((stat, i) => (
+                <div key={i}>
+                  <div
+                    className="text-4xl md:text-5xl font-bold mb-2"
+                    style={{ color: i === 1 ? primaryColor : 'white' }}
+                  >
+                    {stat.value}
+                  </div>
+                  <div className="text-gray-400">{stat.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* How It Works */}
+      <section id="how-it-works" className="py-24 bg-black">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold mb-4">How It Works</h2>
+            <p className="text-gray-400 text-lg">Your journey to becoming investor-ready</p>
+          </div>
+
+          <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4 max-w-6xl mx-auto">
+            {howItWorks.map((item, i) => (
+              <div key={i} className="text-center">
+                <div
+                  className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold text-white"
+                  style={{ backgroundColor: primaryColor }}
+                >
+                  {item.step}
+                </div>
+                <h3 className="font-semibold mb-2">{item.title}</h3>
+                <p className="text-sm text-gray-400">{item.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-24" style={{ background: `linear-gradient(to right, ${primaryColor}40, ${primaryColor}20)` }}>
+        <div className="container mx-auto px-6 text-center">
+          <h2 className="text-4xl md:text-5xl font-bold mb-6">
+            Ready to tell your story?
+          </h2>
+          <p className="text-xl text-gray-300 mb-8 max-w-2xl mx-auto">
+            Join founders who have transformed their pitches and raised successfully with {companyName}.
+          </p>
+          <Link href="/signup/founder">
+            <Button size="lg" className="bg-white text-black hover:bg-gray-200 px-12 py-6 text-lg font-semibold">
+              Start Your Journey
+              <Sparkles className="ml-2 w-5 h-5" />
+            </Button>
+          </Link>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-gray-950 py-16 border-t border-white/10">
+        <div className="container mx-auto px-6">
+          <div className="grid md:grid-cols-4 gap-12 mb-12">
+            <div>
+              <div className="text-2xl font-bold mb-4">{companyName}</div>
+              <p className="text-gray-400 text-sm">{footerDescription}</p>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-4">Services</h4>
+              <ul className="space-y-2 text-sm text-gray-400">
+                {clientConfig.footer.serviceLinks.map((link, i) => (
+                  <li key={i}>
+                    <Link href={link.href} className="hover:text-white">{link.label}</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-4">Company</h4>
+              <ul className="space-y-2 text-sm text-gray-400">
+                {clientConfig.footer.companyLinks.map((link, i) => (
+                  <li key={i}>
+                    <Link href={link.href} className="hover:text-white">{link.label}</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold mb-4">Legal</h4>
+              <ul className="space-y-2 text-sm text-gray-400">
+                {clientConfig.footer.legalLinks.map((link, i) => (
+                  <li key={i}>
+                    <Link href={link.href} className="hover:text-white">{link.label}</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-center">
+            <p className="text-sm text-gray-500">
+              © {new Date().getFullYear()} {companyName}. All rights reserved.
+            </p>
+            <div className="flex gap-6 mt-4 md:mt-0">
+              <Link href="/privacy" className="text-sm text-gray-500 hover:text-white">
+                Privacy Policy
+              </Link>
+              <Link href={websiteUrl} className="text-sm text-gray-500 hover:text-white">
+                {websiteUrl.replace('https://', '').replace('http://', '')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN PAGE COMPONENT - Detects context and renders appropriate version
+// ============================================================================
+
+export default function HomePage() {
+  // Detect if this is the master platform or a white-label deployment
+  const isMasterPlatform = clientConfig.company.name === 'RaiseReady Impact';
+
+  if (isMasterPlatform) {
+    return <MasterPlatformSelector />;
+  }
+
+  return <WhiteLabelLanding />;
 }
