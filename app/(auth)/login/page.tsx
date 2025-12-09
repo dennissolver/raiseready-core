@@ -1,114 +1,92 @@
 'use client';
+
 import { clientConfig } from '@/config';
-import { Auth } from '@supabase/auth-ui-react'
-import { ThemeSupa } from '@supabase/auth-ui-shared'
-import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { Auth } from '@supabase/auth-ui-react';
+import { ThemeSupa } from '@supabase/auth-ui-shared';
+import { createClient } from '@/lib/supabase/client';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
 export default function LoginPage() {
-  const router = useRouter()
-  const supabase = createClient()
-  const [isChecking, setIsChecking] = useState(true)
+  const router = useRouter();
+  const supabase = createClient();
 
-  const getUserRole = async (userId: string): Promise<string> => {
-    // Check user_roles table first (for investor_admin)
-    const { data: roleData, error: roleError } = await (supabase as any)
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .single()
-
-    if (!roleError && roleData?.role === 'portal_admin') {
-      return 'portal_admin'
-    }
-
-    // Check founders table
-    const { data: founder, error: founderError } = await supabase
-      .from('founders')
-      .select('user_role')
-      .eq('id', userId)
-      .single()
-
-    if (!founderError && founder) {
-      return 'founder'
-    }
-
-    // Check pitch_decks table (if user created a pitch, they're a founder)
-    const { data: pitchDeck, error: pitchError } = await supabase
-      .from('pitch_decks')
-      .select('founder_id')
-      .eq('founder_id', userId)
-      .limit(1)
-      .single()
-
-    if (!pitchError && pitchDeck) {
-      return 'founder'
-    }
-
-    // Default to founder if no role found
-    return 'founder'
-  }
-
-  const redirectToDashboard = async (userId: string) => {
-    const role = await getUserRole(userId)
-
-    console.log('User role detected:', role)
-
-    if (role === 'portal_admin') {
-      console.log('Redirecting to " + clientConfig.company.name + " admin dashboard')
-      router.push('/portal/dashboard')
-    } else {
-      console.log('Redirecting to founder dashboard')
-      router.push('/founder/dashboard')
-    }
-    router.refresh()
-  }
+  // Determine platform type
+  const isServiceProvider = clientConfig.platformMode === 'coaching';
+  const isImpactInvestor = clientConfig.platformType === 'impact_investor';
+  const isFamilyOffice = clientConfig.platformType === 'family_office';
 
   useEffect(() => {
-    // Check if already logged in on mount
-    const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session) {
-        console.log('Already logged in, redirecting...')
-        await redirectToDashboard(session.user.id)
-      }
-      setIsChecking(false)
-    }
-
-    checkUser()
-
-    // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth event:', event)
+      if (event === 'SIGNED_IN' && session?.user) {
+        // Check user role and redirect appropriately
+        const { data: founderData } = await (supabase as any)
+          .from('founders')
+          .select('id')
+          .eq('id', session.user.id)
+          .single();
 
-      if (event === 'SIGNED_IN' && session) {
-        await redirectToDashboard(session.user.id)
+        const { data: investorData } = await (supabase as any)
+          .from('investor_profiles')
+          .select('id')
+          .eq('id', session.user.id)
+          .single();
+
+        if (founderData) {
+          router.push('/founder/dashboard');
+        } else if (investorData) {
+          router.push('/portal/dashboard');
+        } else {
+          // Default to founder signup flow
+          router.push('/signup/founder');
+        }
+        router.refresh();
       }
-    })
+    });
+    return () => subscription.unsubscribe();
+  }, [router, supabase]);
 
-    return () => subscription.unsubscribe()
-  }, [router, supabase])
+  // Get theme colors from config
+  const primaryColor = clientConfig.theme?.colors?.primary || 'hsl(262, 83%, 58%)';
+  const accentColor = clientConfig.theme?.colors?.accent || 'hsl(262, 83%, 45%)';
 
-  if (isChecking) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-violet-100">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Checking session...</p>
-        </div>
-      </div>
-    )
-  }
+  // Background gradient based on platform type
+  const getBgGradient = () => {
+    if (isServiceProvider) {
+      return 'from-slate-900 to-slate-800';
+    }
+    if (isImpactInvestor) {
+      return 'from-emerald-900 to-slate-900';
+    }
+    if (isFamilyOffice) {
+      return 'from-indigo-900 to-slate-900';
+    }
+    return 'from-purple-900 to-slate-900';
+  };
+
+  const getWelcomeText = () => {
+    if (isServiceProvider) {
+      return 'Access your pitch coaching portal';
+    }
+    if (isImpactInvestor) {
+      return 'Access your impact investing portal';
+    }
+    if (isFamilyOffice) {
+      return 'Access your family office portal';
+    }
+    return 'Access your investor portal';
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-50 to-violet-100">
+    <div className={`min-h-screen flex items-center justify-center bg-gradient-to-br ${getBgGradient()}`}>
       <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-lg">
+        {/* Logo/Company Name */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">Welcome to " + clientConfig.company.name + "</h1>
-          <p className="text-muted-foreground">Sign in to continue</p>
+          <h1 className="text-3xl font-bold mb-2">{clientConfig.company.name}</h1>
+          <p className="text-muted-foreground">{getWelcomeText()}</p>
         </div>
 
+        {/* Auth Form */}
         <Auth
           supabaseClient={supabase}
           appearance={{
@@ -116,8 +94,8 @@ export default function LoginPage() {
             variables: {
               default: {
                 colors: {
-                  brand: 'hsl(262, 83%, 58%)',
-                  brandAccent: 'hsl(262, 83%, 45%)',
+                  brand: primaryColor,
+                  brandAccent: accentColor,
                 }
               }
             }
@@ -126,10 +104,21 @@ export default function LoginPage() {
           providers={[]}
         />
 
+        {/* Footer - only show signup link if not service provider admin portal */}
         <div className="mt-6 text-center text-sm text-muted-foreground">
-          Want to submit a pitch? <a href="/signup/founder" className="text-primary hover:underline">Create an account</a>
+          {isServiceProvider ? (
+            <>
+              Are you a founder client?{' '}
+              <a href="/signup/founder" className="text-primary hover:underline">Create account</a>
+            </>
+          ) : (
+            <>
+              New founder?{' '}
+              <a href="/signup/founder" className="text-primary hover:underline">Submit your pitch</a>
+            </>
+          )}
         </div>
       </div>
     </div>
-  )
+  );
 }

@@ -803,12 +803,18 @@ export default function SetupWizard() {
               className="bg-slate-800 border-slate-700"
             />
           </div>
+
           <div className="col-span-2">
             <Label>Website URL *</Label>
             <div className="flex gap-2">
               <Input
                 value={formData.companyWebsite}
                 onChange={(e) => updateForm('companyWebsite', e.target.value)}
+                onBlur={() => {
+                  if (formData.companyWebsite?.startsWith('http') && !formData.extractedThesis) {
+                    extractFromWebsite();
+                  }
+                }}
                 placeholder="https://example.com"
                 className="bg-slate-800 border-slate-700 flex-1"
               />
@@ -823,6 +829,7 @@ export default function SetupWizard() {
               </Button>
             </div>
           </div>
+
           <div>
             <Label>Phone</Label>
             <Input

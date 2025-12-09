@@ -1,21 +1,50 @@
 ﻿// config/index.ts
-import { clientConfig } from './client';
+// Re-exports clientConfig with defaults for platform-specific fields
 
-export { clientConfig };
-export type { ClientConfig } from './client';
+import { clientConfig as baseConfig } from './client';
 
-export const getCompanyName = () => clientConfig.company.name;
-export const getAdminRole = () => clientConfig.platform.adminRole;
-export const getUrlPrefix = () => clientConfig.platform.urlPrefix;
-export const getCoachName = () => clientConfig.coaching.coachName;
-export const getPortalRoute = (path: string) => '/' + clientConfig.platform.urlPrefix + path;
-export const getThemeColors = () => clientConfig.theme.colors;
-export const isFeatureEnabled = (feature: keyof typeof clientConfig.platform.features) =>
-  clientConfig.platform.features[feature];
-export const replaceTemplateVars = (text: string): string => {
-  return text
-    .replace(/{company}/g, clientConfig.company.name)
-    .replace(/{coach}/g, clientConfig.coaching.coachName)
-    .replace(/{year}/g, String(new Date().getFullYear()))
-    .replace(/{email}/g, clientConfig.company.supportEmail);
+// Ensure backwards compatibility for older configs without platform fields
+export const clientConfig = {
+  ...baseConfig,
+  // Default platform type if not set
+  platformType: (baseConfig as any).platformType || 'commercial_investor',
+  platformMode: (baseConfig as any).platformMode || 'screening',
 };
+
+// Re-export all helpers
+export {
+  getCompanyName,
+  getAdminName,
+  getAdminRole,
+  getUrlPrefix,
+  getCoachName,
+  getPortalRoute,
+  getThemeColor,
+  replaceTemplateVars,
+  isFeatureEnabled
+} from './client';
+
+// New platform-aware helpers
+export const getPlatformType = () => clientConfig.platformType;
+export const getPlatformMode = () => clientConfig.platformMode;
+export const isScreeningMode = () => clientConfig.platformMode === 'screening';
+export const isCoachingMode = () => clientConfig.platformMode === 'coaching';
+export const isImpactInvestor = () => clientConfig.platformType === 'impact_investor';
+export const isFamilyOffice = () => clientConfig.platformType === 'family_office';
+export const isServiceProvider = () => clientConfig.platformType === 'founder_service_provider';
+export const isCommercialInvestor = () => clientConfig.platformType === 'commercial_investor';
+
+// Feature checks with fallbacks
+export const hasInvestorMatching = () =>
+  clientConfig.platform?.features?.investorMatching !== false && !isServiceProvider();
+
+export const hasSDGScoring = () =>
+  isImpactInvestor() || (clientConfig as any).impactInvestor?.usesRealChangeIndex;
+
+export const hasValuesScoring = () =>
+  isFamilyOffice() || (clientConfig.platform?.features as any)?.valuesScoring;
+
+export const hasClientPortfolio = () =>
+  isServiceProvider() || (clientConfig.platform?.features as any)?.clientPortfolio;
+
+export type { ClientConfig } from './client';
