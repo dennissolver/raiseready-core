@@ -1,62 +1,96 @@
+'use client';
+
 import Link from 'next/link';
-import { clientConfig } from '@/config';
 import {
-  Brain, Target, TrendingUp, Heart, Shield, Clock,
-  Mic, Users, Zap, Upload, MessageSquare, CheckCircle,
-  ArrowRight, ChevronRight
+  Heart, TrendingUp, Users, GraduationCap,
+  ArrowRight, Sparkles, Zap, Globe, Shield
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-// Icon mapping for dynamic icons from config
-const iconMap: Record<string, React.ElementType> = {
-  Brain, Target, TrendingUp, Heart, Shield, Clock,
-  Mic, Users, Zap, Upload, MessageSquare, CheckCircle,
-};
+// ============================================================================
+// PLATFORM TYPE DEFINITIONS
+// ============================================================================
 
-export default function LandingPage() {
-  const { landing, company, theme, platformType, platformMode } = clientConfig;
-  const isServiceProvider = platformMode === 'coaching';
+const PLATFORM_TYPES = [
+  {
+    type: 'impact_investor',
+    title: 'Impact Investor',
+    subtitle: 'For Impact Funds & ESG Investors',
+    description: 'Screen impact founders using SDG alignment and our RealChange Impact Index. Coach founders on impact thesis, theory of change, and blended returns.',
+    icon: Heart,
+    gradient: 'from-emerald-500 to-teal-600',
+    hoverGradient: 'hover:from-emerald-600 hover:to-teal-700',
+    bgGlow: 'bg-emerald-500/20',
+    features: [
+      'SDG Alignment Scoring',
+      'Blended Returns Calculator',
+      'Impact Thesis Coaching',
+      'Theory of Change Analysis',
+    ],
+    founderType: 'Impact Founders',
+    investorType: 'Impact Investors',
+  },
+  {
+    type: 'commercial_investor',
+    title: 'Commercial VC',
+    subtitle: 'For VCs & Growth Investors',
+    description: 'Screen founders on growth metrics, market opportunity, and unit economics. Coach founders on ARR, traction, and investor-ready financials.',
+    icon: TrendingUp,
+    gradient: 'from-purple-500 to-violet-600',
+    hoverGradient: 'hover:from-purple-600 hover:to-violet-700',
+    bgGlow: 'bg-purple-500/20',
+    features: [
+      'Growth Metrics Analysis',
+      'Financial Health Scoring',
+      'Market Fit Assessment',
+      'Deal Flow Management',
+    ],
+    founderType: 'Growth Founders',
+    investorType: 'VCs & Angels',
+  },
+  {
+    type: 'family_office',
+    title: 'Family Office',
+    subtitle: 'For Patient Capital & Values-Aligned Investing',
+    description: 'Screen founders for long-term value creation, mission alignment, and reputation fit. Coach founders on generational thinking and values articulation.',
+    icon: Users,
+    gradient: 'from-blue-500 to-indigo-600',
+    hoverGradient: 'hover:from-blue-600 hover:to-indigo-700',
+    bgGlow: 'bg-blue-500/20',
+    features: [
+      'Values Alignment Scoring',
+      'Legacy Priority Matching',
+      'Long-term Fit Analysis',
+      'Reputation Risk Assessment',
+    ],
+    founderType: 'Mission-Driven Founders',
+    investorType: 'Family Principals',
+  },
+  {
+    type: 'founder_service_provider',
+    title: 'Founder Service Provider',
+    subtitle: 'For Law Firms, Accelerators & Consultancies',
+    description: 'Provide AI pitch coaching as a value-add service to your startup clients. No investor matching - pure coaching and improvement tracking.',
+    icon: GraduationCap,
+    gradient: 'from-amber-500 to-orange-600',
+    hoverGradient: 'hover:from-amber-600 hover:to-orange-700',
+    bgGlow: 'bg-amber-500/20',
+    features: [
+      'Pitch Quality Scoring',
+      'AI Coaching Sessions',
+      'Progress Tracking',
+      'Client Portfolio Management',
+    ],
+    founderType: 'Your Startup Clients',
+    investorType: null, // No investor side
+  },
+];
 
-  // Get gradient classes based on platform type
-  const getHeroGradient = () => {
-    switch (platformType) {
-      case 'impact_investor':
-        return 'from-emerald-600 via-green-700 to-teal-800';
-      case 'family_office':
-        return 'from-indigo-600 via-blue-700 to-slate-800';
-      case 'founder_service_provider':
-        return 'from-amber-500 via-orange-600 to-red-700';
-      default:
-        return 'from-purple-600 via-violet-700 to-indigo-800';
-    }
-  };
+// ============================================================================
+// COMPONENT
+// ============================================================================
 
-  const getAccentColor = () => {
-    switch (platformType) {
-      case 'impact_investor':
-        return 'text-emerald-400';
-      case 'family_office':
-        return 'text-blue-400';
-      case 'founder_service_provider':
-        return 'text-amber-400';
-      default:
-        return 'text-purple-400';
-    }
-  };
-
-  const getButtonGradient = () => {
-    switch (platformType) {
-      case 'impact_investor':
-        return 'from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700';
-      case 'family_office':
-        return 'from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700';
-      case 'founder_service_provider':
-        return 'from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700';
-      default:
-        return 'from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700';
-    }
-  };
-
+export default function MasterLandingPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       {/* Navigation */}
@@ -64,15 +98,16 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
-              <span className="text-xl font-bold">{company.name}</span>
+              <Sparkles className="w-6 h-6 text-purple-400" />
+              <span className="text-xl font-bold">RaiseReady</span>
             </div>
             <div className="flex items-center gap-4">
               <Link href="/login" className="text-gray-300 hover:text-white transition-colors">
-                Sign In
+                Client Login
               </Link>
-              <Link href={landing.hero.ctaLink}>
-                <Button className={`bg-gradient-to-r ${getButtonGradient()} text-white`}>
-                  {landing.hero.ctaText}
+              <Link href="/setup">
+                <Button className="bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 text-white">
+                  Create Platform
                 </Button>
               </Link>
             </div>
@@ -81,165 +116,222 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero Section */}
-      <section className={`pt-32 pb-20 bg-gradient-to-br ${getHeroGradient()}`}>
+      <section className="pt-32 pb-16 bg-gradient-to-br from-slate-900 via-purple-900/20 to-slate-900">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-500/10 border border-purple-500/30 rounded-full text-purple-300 text-sm mb-6">
+            <Zap className="w-4 h-4" />
+            White-Label AI Pitch Coaching Platform
+          </div>
           <h1 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
-            {landing.hero.headline}
+            Launch Your Branded
+            <span className="block bg-gradient-to-r from-purple-400 via-pink-400 to-amber-400 bg-clip-text text-transparent">
+              Founder Coaching Platform
+            </span>
           </h1>
-          <p className="text-xl md:text-2xl text-gray-200 mb-8 max-w-3xl mx-auto">
-            {landing.hero.subHeadline}
+          <p className="text-xl md:text-2xl text-gray-300 mb-8 max-w-3xl mx-auto">
+            Deploy a fully customized AI pitch coaching platform in minutes.
+            Your branding, your thesis, your founders.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href={landing.hero.ctaLink}>
-              <Button size="lg" className={`bg-gradient-to-r ${getButtonGradient()} text-white px-8 py-6 text-lg`}>
-                {landing.hero.ctaText}
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-            </Link>
-            <Link href={landing.hero.secondaryCtaLink}>
-              <Button size="lg" variant="outline" className="border-white/30 text-white hover:bg-white/10 px-8 py-6 text-lg">
-                {landing.hero.secondaryCtaText}
-              </Button>
-            </Link>
+          <div className="flex flex-wrap justify-center gap-6 text-sm text-gray-400">
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-green-400" />
+              Isolated Database
+            </div>
+            <div className="flex items-center gap-2">
+              <Globe className="w-4 h-4 text-blue-400" />
+              Custom Domain
+            </div>
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              AI Voice Coach
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-16 bg-slate-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            {landing.stats.map((stat, index) => (
-              <div key={index} className="text-center">
-                <div className={`text-4xl md:text-5xl font-bold ${getAccentColor()} mb-2`}>
-                  {stat.value}
-                </div>
-                <div className="text-gray-400">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Value Props Section */}
+      {/* Platform Type Selection */}
       <section className="py-20 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              {isServiceProvider ? 'How We Help Your Clients' : 'Why Choose Us'}
+              Choose Your Platform Type
             </h2>
             <p className="text-gray-400 max-w-2xl mx-auto">
-              {company.description}
+              Each platform type is optimized for different investment approaches and founder needs.
+              Select the one that matches your organization.
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {landing.valueProps.map((prop, index) => {
-              const Icon = iconMap[prop.icon] || Brain;
+
+          <div className="grid md:grid-cols-2 gap-8">
+            {PLATFORM_TYPES.map((platform) => {
+              const Icon = platform.icon;
               return (
-                <div key={index} className="p-6 bg-slate-900 rounded-xl border border-slate-800 hover:border-slate-700 transition-colors">
-                  <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${getButtonGradient()} flex items-center justify-center mb-4`}>
-                    <Icon className="w-6 h-6 text-white" />
+                <Link
+                  key={platform.type}
+                  href={`/setup?type=${platform.type}`}
+                  className="group"
+                >
+                  <div className="h-full p-8 bg-slate-900 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/5">
+                    {/* Header */}
+                    <div className="flex items-start gap-4 mb-6">
+                      <div className={`p-4 rounded-xl bg-gradient-to-br ${platform.gradient} ${platform.hoverGradient} transition-all group-hover:scale-110`}>
+                        <Icon className="w-8 h-8 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-bold text-white group-hover:text-purple-300 transition-colors">
+                          {platform.title}
+                        </h3>
+                        <p className="text-gray-400">{platform.subtitle}</p>
+                      </div>
+                    </div>
+
+                    {/* Description */}
+                    <p className="text-gray-300 mb-6">
+                      {platform.description}
+                    </p>
+
+                    {/* Features */}
+                    <div className="grid grid-cols-2 gap-2 mb-6">
+                      {platform.features.map((feature, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm text-gray-400">
+                          <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${platform.gradient}`} />
+                          {feature}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* User Types */}
+                    <div className="flex flex-wrap gap-3 mb-6">
+                      <span className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
+                        👤 {platform.founderType}
+                      </span>
+                      {platform.investorType && (
+                        <span className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
+                          💼 {platform.investorType}
+                        </span>
+                      )}
+                      {!platform.investorType && (
+                        <span className="px-3 py-1 bg-amber-500/20 border border-amber-500/30 rounded-full text-sm text-amber-300">
+                          Coaching Only
+                        </span>
+                      )}
+                    </div>
+
+                    {/* CTA */}
+                    <div className={`flex items-center gap-2 text-transparent bg-gradient-to-r ${platform.gradient} bg-clip-text font-semibold group-hover:gap-4 transition-all`}>
+                      Create {platform.title} Platform
+                      <ArrowRight className={`w-5 h-5 text-gray-400 group-hover:translate-x-2 transition-transform`} />
+                    </div>
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">{prop.title}</h3>
-                  <p className="text-gray-400">{prop.description}</p>
-                </div>
+                </Link>
               );
             })}
           </div>
         </div>
       </section>
 
-      {/* How It Works Section */}
-      <section id="how-it-works" className="py-20 bg-slate-900">
+      {/* How It Works */}
+      <section className="py-20 bg-slate-900">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">How It Works</h2>
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              Launch in Minutes, Not Months
+            </h2>
             <p className="text-gray-400">
-              {isServiceProvider
-                ? 'Simple process for your founder clients'
-                : 'Your path to investor readiness'
-              }
+              From selection to live platform in under 10 minutes
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {landing.howItWorks.map((step, index) => (
-              <div key={index} className="relative">
-                <div className="text-center">
-                  <div className={`w-16 h-16 mx-auto rounded-full bg-gradient-to-br ${getButtonGradient()} flex items-center justify-center mb-4`}>
-                    <span className="text-2xl font-bold">{step.step}</span>
-                  </div>
-                  <h3 className="text-xl font-semibold mb-2">{step.title}</h3>
-                  <p className="text-gray-400">{step.description}</p>
+
+          <div className="grid md:grid-cols-4 gap-8">
+            {[
+              {
+                step: '1',
+                title: 'Choose Type',
+                description: 'Select the platform type that matches your investment approach or service model.',
+              },
+              {
+                step: '2',
+                title: 'Enter Details',
+                description: 'Add your company info, branding, and we\'ll extract your thesis from your website.',
+              },
+              {
+                step: '3',
+                title: 'Configure AI',
+                description: 'Set up your AI voice coach personality and scoring criteria.',
+              },
+              {
+                step: '4',
+                title: 'Go Live',
+                description: 'We create your Supabase, GitHub, Vercel, and ElevenLabs resources automatically.',
+              },
+            ].map((item, index) => (
+              <div key={index} className="text-center">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
+                  <span className="text-2xl font-bold">{item.step}</span>
                 </div>
-                {index < landing.howItWorks.length - 1 && (
-                  <ChevronRight className="hidden md:block absolute top-8 -right-4 w-8 h-8 text-slate-700" />
-                )}
+                <h3 className="text-xl font-semibold mb-2">{item.title}</h3>
+                <p className="text-gray-400">{item.description}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Thesis Section (for investors) */}
-      {!isServiceProvider && clientConfig.thesis && (
-        <section id="thesis" className="py-20 bg-slate-950">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                {platformType === 'impact_investor' ? 'Our Impact Thesis' :
-                 platformType === 'family_office' ? 'Our Values' : 'Investment Thesis'}
-              </h2>
-            </div>
-            <div className="bg-slate-900 rounded-xl p-8 border border-slate-800">
-              <p className="text-xl text-gray-300 italic mb-8">
-                "{clientConfig.thesis.philosophy}"
-              </p>
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <h4 className={`font-semibold ${getAccentColor()} mb-2`}>Focus Areas</h4>
-                  <ul className="text-gray-400 space-y-1">
-                    {clientConfig.thesis.focusAreas.map((area, i) => (
-                      <li key={i} className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        {area}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h4 className={`font-semibold ${getAccentColor()} mb-2`}>Sectors</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {clientConfig.thesis.sectors.map((sector, i) => (
-                      <span key={i} className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
-                        {sector}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
+      {/* What Gets Created */}
+      <section className="py-20 bg-slate-950">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">
+              What You Get
+            </h2>
+            <p className="text-gray-400">
+              A complete, production-ready platform with everything configured
+            </p>
           </div>
-        </section>
-      )}
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                title: 'Isolated Infrastructure',
+                items: ['Dedicated Supabase database', 'Private GitHub repository', 'Vercel deployment', 'Custom domain support'],
+              },
+              {
+                title: 'AI Coaching System',
+                items: ['Custom ElevenLabs voice agent', 'Pitch analysis engine', 'Discovery sessions', 'Practice simulations'],
+              },
+              {
+                title: 'Platform Features',
+                items: ['Founder portal', 'Investor dashboard', 'Deck upload & analysis', 'Progress tracking'],
+              },
+            ].map((column, i) => (
+              <div key={i} className="p-6 bg-slate-900 rounded-xl border border-slate-800">
+                <h3 className="text-xl font-semibold mb-4">{column.title}</h3>
+                <ul className="space-y-3">
+                  {column.items.map((item, j) => (
+                    <li key={j} className="flex items-center gap-2 text-gray-300">
+                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* CTA Section */}
-      <section className={`py-20 bg-gradient-to-br ${getHeroGradient()}`}>
+      <section className="py-20 bg-gradient-to-br from-purple-900/50 via-slate-900 to-violet-900/50">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            {isServiceProvider
-              ? 'Ready to Help Your Clients Succeed?'
-              : 'Ready to Perfect Your Pitch?'
-            }
+            Ready to Launch Your Platform?
           </h2>
-          <p className="text-xl text-gray-200 mb-8">
-            {isServiceProvider
-              ? 'Give your founder clients the coaching advantage they need.'
-              : 'Join hundreds of founders who have transformed their investor presentations.'
-            }
+          <p className="text-xl text-gray-300 mb-8">
+            Choose your platform type above or go straight to setup.
           </p>
-          <Link href={landing.hero.ctaLink}>
-            <Button size="lg" className="bg-white text-slate-900 hover:bg-gray-100 px-8 py-6 text-lg font-semibold">
-              {landing.hero.ctaText}
+          <Link href="/setup">
+            <Button size="lg" className="bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 text-white px-8 py-6 text-lg">
+              Start Setup Wizard
               <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
           </Link>
@@ -249,50 +341,20 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="py-12 bg-slate-950 border-t border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid md:grid-cols-4 gap-8">
-            <div>
-              <h3 className="font-bold text-lg mb-4">{company.name}</h3>
-              <p className="text-gray-400 text-sm">{clientConfig.footer.description}</p>
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-400" />
+              <span className="font-bold">RaiseReady</span>
+              <span className="text-gray-500">by Global Buildtech Australia</span>
             </div>
-            <div>
-              <h4 className="font-semibold mb-4">Services</h4>
-              <ul className="space-y-2">
-                {clientConfig.footer.serviceLinks.map((link, i) => (
-                  <li key={i}>
-                    <Link href={link.href} className="text-gray-400 hover:text-white text-sm">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+            <div className="flex items-center gap-6 text-sm text-gray-400">
+              <Link href="/privacy" className="hover:text-white">Privacy</Link>
+              <Link href="/terms" className="hover:text-white">Terms</Link>
+              <Link href="/contact" className="hover:text-white">Contact</Link>
             </div>
-            <div>
-              <h4 className="font-semibold mb-4">Company</h4>
-              <ul className="space-y-2">
-                {clientConfig.footer.companyLinks.map((link, i) => (
-                  <li key={i}>
-                    <Link href={link.href} className="text-gray-400 hover:text-white text-sm">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+            <div className="text-sm text-gray-500">
+              © {new Date().getFullYear()} RaiseReady. All rights reserved.
             </div>
-            <div>
-              <h4 className="font-semibold mb-4">Legal</h4>
-              <ul className="space-y-2">
-                {clientConfig.footer.legalLinks.map((link, i) => (
-                  <li key={i}>
-                    <Link href={link.href} className="text-gray-400 hover:text-white text-sm">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          <div className="mt-12 pt-8 border-t border-slate-800 text-center text-gray-400 text-sm">
-            {clientConfig.footer.copyright}
           </div>
         </div>
       </footer>
