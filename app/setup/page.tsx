@@ -558,7 +558,7 @@ export default function SetupWizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectName: projectSlug,
-          repoName: githubRepoName,
+          githubRepo: githubRepoName,
           framework: 'nextjs',
           envVars: {
             NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
