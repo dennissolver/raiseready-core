@@ -63,14 +63,21 @@ export async function POST(req: NextRequest) {
       // Step 2: Create the project
       console.log(`Creating Vercel project: ${projectName} linked to ${githubRepo}`);
 
+      // Ensure repo name includes owner
+      const owner = process.env.GITHUB_OWNER || 'dennissolver';
+      const fullRepoName = githubRepo.includes('/') ? githubRepo : `${owner}/${githubRepo}`;
+
+      console.log(`Linking to GitHub repo: ${fullRepoName}`);
+
       const createBody = {
         name: projectName,
         framework: 'nextjs',
         gitRepository: {
           type: 'github',
-          repo: githubRepo,
+          repo: fullRepoName,
         },
       };
+
 
       const createResponse = await fetch(`${VERCEL_API}/v10/projects${teamParam}`, {
         method: 'POST',
