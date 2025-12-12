@@ -44,6 +44,10 @@ export async function POST(req: NextRequest) {
 
     const teamParam = teamId && teamId.length > 0 ? `?teamId=${teamId}` : '';
 
+    // Ensure repo name includes owner
+    const owner = process.env.GITHUB_OWNER || 'dennissolver';
+    const fullRepoName = githubRepo.includes('/') ? githubRepo : `${owner}/${githubRepo}`;
+
     // Step 1: Check if project already exists
     console.log(`Checking for existing Vercel project: ${projectName}`);
 
@@ -62,11 +66,6 @@ export async function POST(req: NextRequest) {
     } else {
       // Step 2: Create the project
       console.log(`Creating Vercel project: ${projectName} linked to ${githubRepo}`);
-
-      // Ensure repo name includes owner
-      const owner = process.env.GITHUB_OWNER || 'dennissolver';
-      const fullRepoName = githubRepo.includes('/') ? githubRepo : `${owner}/${githubRepo}`;
-
       console.log(`Linking to GitHub repo: ${fullRepoName}`);
 
       const createBody = {
@@ -77,7 +76,6 @@ export async function POST(req: NextRequest) {
           repo: fullRepoName,
         },
       };
-
 
       const createResponse = await fetch(`${VERCEL_API}/v10/projects${teamParam}`, {
         method: 'POST',
@@ -184,8 +182,42 @@ export async function POST(req: NextRequest) {
 
     console.log('Environment variables configured');
 
-    // Note: We don't manually trigger deployment here.
-    // The GitHub config push (which happens AFTER this) will auto-trigger deployment via webhook.
+    // Step 4: Trigger deployment (since GitHub code was pushed before Vercel project existed)
+    console.log('Triggering deployment...');
+    let deploymentId = '';
+
+    try {
+      const deployResponse = await fetch(
+        `${VERCEL_API}/v13/deployments${teamParam}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            name: projectName,
+            project: projectId,
+            target: 'production',
+            gitSource: {
+              type: 'github',
+              repo: fullRepoName,
+              ref: 'main',
+            },
+          }),
+        }
+      );
+
+      if (deployResponse.ok) {
+        const deployment = await deployResponse.json();
+        deploymentId = deployment.id || deployment.uid || '';
+        console.log('✅ Deployment triggered:', deploymentId);
+      } else {
+        const deployError = await deployResponse.text();
+        console.warn('Deployment trigger warning:', deployError);
+        // Don't fail - the project is created, deployment can be done manually
+      }
+    } catch (deployErr) {
+      console.warn('Deployment trigger error:', deployErr);
+      // Don't fail - the project is created
+    }
 
     const deploymentUrl = `https://${projectName}.vercel.app`;
 
@@ -194,7 +226,7 @@ export async function POST(req: NextRequest) {
       projectId,
       projectName,
       url: deploymentUrl,
-      deploymentId: '',
+      deploymentId,
       isExistingProject,
       envVarsConfigured: Object.keys(allEnvVars).filter(k => allEnvVars[k as keyof typeof allEnvVars]).length,
     });
