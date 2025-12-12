@@ -25,64 +25,103 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    console.log('Running base schema migration...');
+    // ========== Step 1: Create Storage Buckets ==========
+    console.log('Creating storage buckets...');
 
-    // Run the migration SQL
-    const { error } = await supabase.rpc('exec_sql', { sql: BASE_SCHEMA_SQL });
+    // Create pitch-decks bucket
+    const { error: pitchBucketError } = await supabase.storage.createBucket('pitch-decks', {
+      public: false,
+      fileSizeLimit: 52428800, // 50MB
+      allowedMimeTypes: ['application/pdf'],
+    });
 
-    // If RPC doesn't exist, try direct query via REST
-    if (error) {
-      console.log('RPC not available, using direct SQL...');
-
-      // Split into individual statements and run via fetch
-      const projectRef = supabaseUrl.replace('https://', '').replace('.supabase.co', '');
-
-      const response = await fetch(`${supabaseUrl}/rest/v1/rpc/exec_sql`, {
-        method: 'POST',
-        headers: {
-          'apikey': supabaseServiceKey,
-          'Authorization': `Bearer ${supabaseServiceKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ sql: BASE_SCHEMA_SQL }),
-      });
-
-      if (!response.ok) {
-        // Fallback: Run SQL via Supabase Management API
-        console.log('Using Management API for SQL execution...');
-
-        const managementResponse = await fetch(
-          `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${process.env.SUPABASE_ACCESS_TOKEN}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ query: BASE_SCHEMA_SQL }),
-          }
-        );
-
-        if (!managementResponse.ok) {
-          const errorText = await managementResponse.text();
-          console.error('Management API error:', errorText);
-
-          // Don't fail completely - tables might already exist
-          return NextResponse.json({
-            success: true,
-            warning: 'Could not run migration automatically',
-            message: 'Tables may need to be created manually',
-          });
-        }
-      }
+    if (pitchBucketError && !pitchBucketError.message.includes('already exists')) {
+      console.warn('Failed to create pitch-decks bucket:', pitchBucketError.message);
+    } else {
+      console.log('✅ pitch-decks bucket created (or already exists)');
     }
 
-    console.log('Base schema migration completed');
+    // Create profile-avatars bucket
+    const { error: avatarBucketError } = await supabase.storage.createBucket('avatars', {
+      public: true,
+      fileSizeLimit: 5242880, // 5MB
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+    });
+
+    if (avatarBucketError && !avatarBucketError.message.includes('already exists')) {
+      console.warn('Failed to create avatars bucket:', avatarBucketError.message);
+    } else {
+      console.log('✅ avatars bucket created (or already exists)');
+    }
+
+    // Create company-logos bucket
+    const { error: logoBucketError } = await supabase.storage.createBucket('company-logos', {
+      public: true,
+      fileSizeLimit: 10485760, // 10MB
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml'],
+    });
+
+    if (logoBucketError && !logoBucketError.message.includes('already exists')) {
+      console.warn('Failed to create company-logos bucket:', logoBucketError.message);
+    } else {
+      console.log('✅ company-logos bucket created (or already exists)');
+    }
+
+    // ========== Step 2: Run Database Schema Migration ==========
+    console.log('Running base schema migration...');
+
+    const projectRef = supabaseUrl.replace('https://', '').replace('.supabase.co', '');
+
+    // Try Management API for SQL execution (most reliable)
+    const managementResponse = await fetch(
+      `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.SUPABASE_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: BASE_SCHEMA_SQL }),
+      }
+    );
+
+    if (!managementResponse.ok) {
+      const errorText = await managementResponse.text();
+      console.warn('Management API schema error:', errorText);
+      // Don't fail - tables might already exist
+    } else {
+      console.log('✅ Base schema migration completed');
+    }
+
+    // ========== Step 3: Run Storage RLS Policies ==========
+    console.log('Setting up storage RLS policies...');
+
+    const storagePolicyResponse = await fetch(
+      `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.SUPABASE_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: STORAGE_POLICIES_SQL }),
+      }
+    );
+
+    if (!storagePolicyResponse.ok) {
+      const errorText = await storagePolicyResponse.text();
+      console.warn('Storage policies warning:', errorText);
+    } else {
+      console.log('✅ Storage RLS policies created');
+    }
+
+    console.log('Migration completed successfully');
 
     return NextResponse.json({
       success: true,
-      message: 'Base schema created',
-      tables: ['profiles', 'founders', 'pitch_decks', 'coaching_sessions', 'watchlist'],
+      message: 'Schema and storage created',
+      tables: ['profiles', 'founders', 'pitch_decks', 'coaching_sessions', 'watchlist', 'discovery_responses', 'voice_sessions'],
+      buckets: ['pitch-decks', 'avatars', 'company-logos'],
     });
 
   } catch (error) {
@@ -92,6 +131,149 @@ export async function POST(req: NextRequest) {
     }, { status: 500 });
   }
 }
+
+// Storage RLS Policies SQL
+const STORAGE_POLICIES_SQL = `
+-- =============================================
+-- STORAGE RLS POLICIES FOR PITCH-DECKS BUCKET
+-- =============================================
+
+-- Allow authenticated users to upload to their own folder (user_id/filename)
+DROP POLICY IF EXISTS "Users can upload own pitch decks" ON storage.objects;
+CREATE POLICY "Users can upload own pitch decks"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'pitch-decks' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow users to read their own pitch deck files
+DROP POLICY IF EXISTS "Users can read own pitch decks" ON storage.objects;
+CREATE POLICY "Users can read own pitch decks"
+ON storage.objects FOR SELECT
+TO authenticated
+USING (
+  bucket_id = 'pitch-decks' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow users to update their own pitch deck files
+DROP POLICY IF EXISTS "Users can update own pitch decks" ON storage.objects;
+CREATE POLICY "Users can update own pitch decks"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'pitch-decks' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow users to delete their own pitch deck files
+DROP POLICY IF EXISTS "Users can delete own pitch decks" ON storage.objects;
+CREATE POLICY "Users can delete own pitch decks"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'pitch-decks' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow investors and admins to read ALL pitch decks
+DROP POLICY IF EXISTS "Investors can read all pitch decks" ON storage.objects;
+CREATE POLICY "Investors can read all pitch decks"
+ON storage.objects FOR SELECT
+TO authenticated
+USING (
+  bucket_id = 'pitch-decks' AND
+  EXISTS (
+    SELECT 1 FROM profiles
+    WHERE profiles.id = auth.uid()
+    AND (profiles.user_type IN ('investor', 'admin') OR profiles.is_admin = true)
+  )
+);
+
+-- =============================================
+-- STORAGE RLS POLICIES FOR AVATARS BUCKET
+-- =============================================
+
+-- Allow authenticated users to upload their own avatar
+DROP POLICY IF EXISTS "Users can upload own avatar" ON storage.objects;
+CREATE POLICY "Users can upload own avatar"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'avatars' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow anyone to view avatars (public bucket)
+DROP POLICY IF EXISTS "Avatars are publicly viewable" ON storage.objects;
+CREATE POLICY "Avatars are publicly viewable"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'avatars');
+
+-- Allow users to update their own avatar
+DROP POLICY IF EXISTS "Users can update own avatar" ON storage.objects;
+CREATE POLICY "Users can update own avatar"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'avatars' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow users to delete their own avatar
+DROP POLICY IF EXISTS "Users can delete own avatar" ON storage.objects;
+CREATE POLICY "Users can delete own avatar"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'avatars' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- =============================================
+-- STORAGE RLS POLICIES FOR COMPANY-LOGOS BUCKET
+-- =============================================
+
+-- Allow authenticated users to upload company logos
+DROP POLICY IF EXISTS "Users can upload company logos" ON storage.objects;
+CREATE POLICY "Users can upload company logos"
+ON storage.objects FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'company-logos' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow anyone to view company logos (public bucket)
+DROP POLICY IF EXISTS "Company logos are publicly viewable" ON storage.objects;
+CREATE POLICY "Company logos are publicly viewable"
+ON storage.objects FOR SELECT
+TO public
+USING (bucket_id = 'company-logos');
+
+-- Allow users to update their own company logo
+DROP POLICY IF EXISTS "Users can update own company logo" ON storage.objects;
+CREATE POLICY "Users can update own company logo"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'company-logos' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+
+-- Allow users to delete their own company logo
+DROP POLICY IF EXISTS "Users can delete own company logo" ON storage.objects;
+CREATE POLICY "Users can delete own company logo"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'company-logos' AND
+  (storage.foldername(name))[1] = auth.uid()::text
+);
+`;
 
 // Base schema SQL for client platforms
 const BASE_SCHEMA_SQL = `
@@ -144,18 +326,25 @@ CREATE TABLE IF NOT EXISTS founders (
 -- Pitch decks table
 CREATE TABLE IF NOT EXISTS pitch_decks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  founder_id UUID REFERENCES founders(id) ON DELETE CASCADE,
+  founder_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+  title TEXT,
   file_name TEXT,
   file_url TEXT,
+  file_type TEXT DEFAULT 'pdf',
   file_size INTEGER,
   slide_count INTEGER,
   version INTEGER DEFAULT 1,
+  parent_deck_id UUID REFERENCES pitch_decks(id),
+  is_latest BOOLEAN DEFAULT true,
   is_current BOOLEAN DEFAULT true,
+  status TEXT DEFAULT 'pending',
+  extracted_text TEXT,
   analysis JSONB DEFAULT '{}',
   score INTEGER,
   feedback TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Coaching sessions table
@@ -215,6 +404,8 @@ CREATE INDEX IF NOT EXISTS idx_profiles_user_type ON profiles(user_type);
 CREATE INDEX IF NOT EXISTS idx_founders_user_id ON founders(user_id);
 CREATE INDEX IF NOT EXISTS idx_founders_stage ON founders(stage);
 CREATE INDEX IF NOT EXISTS idx_pitch_decks_founder ON pitch_decks(founder_id);
+CREATE INDEX IF NOT EXISTS idx_pitch_decks_user ON pitch_decks(user_id);
+CREATE INDEX IF NOT EXISTS idx_pitch_decks_latest ON pitch_decks(is_latest) WHERE is_latest = true;
 CREATE INDEX IF NOT EXISTS idx_coaching_founder ON coaching_sessions(founder_id);
 CREATE INDEX IF NOT EXISTS idx_watchlist_investor ON watchlist(investor_id);
 CREATE INDEX IF NOT EXISTS idx_watchlist_founder ON watchlist(founder_id);
@@ -236,6 +427,10 @@ CREATE POLICY "Users can view own profile" ON profiles
 DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile" ON profiles
   FOR UPDATE USING (auth.uid() = id);
+
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
+CREATE POLICY "Users can insert own profile" ON profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "Admins can view all profiles" ON profiles;
 CREATE POLICY "Admins can view all profiles" ON profiles
@@ -259,18 +454,30 @@ CREATE POLICY "Founders can insert own data" ON founders
 DROP POLICY IF EXISTS "Investors can view founders" ON founders;
 CREATE POLICY "Investors can view founders" ON founders
   FOR SELECT USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type = 'investor')
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type IN ('investor', 'admin'))
   );
 
 -- RLS Policies for pitch_decks
-DROP POLICY IF EXISTS "Users can manage own decks" ON pitch_decks;
-CREATE POLICY "Users can manage own decks" ON pitch_decks
-  FOR ALL USING (user_id = auth.uid());
+DROP POLICY IF EXISTS "Users can view own decks" ON pitch_decks;
+CREATE POLICY "Users can view own decks" ON pitch_decks
+  FOR SELECT USING (user_id = auth.uid() OR founder_id = auth.uid());
+
+DROP POLICY IF EXISTS "Users can insert own decks" ON pitch_decks;
+CREATE POLICY "Users can insert own decks" ON pitch_decks
+  FOR INSERT WITH CHECK (user_id = auth.uid() OR founder_id = auth.uid());
+
+DROP POLICY IF EXISTS "Users can update own decks" ON pitch_decks;
+CREATE POLICY "Users can update own decks" ON pitch_decks
+  FOR UPDATE USING (user_id = auth.uid() OR founder_id = auth.uid());
+
+DROP POLICY IF EXISTS "Users can delete own decks" ON pitch_decks;
+CREATE POLICY "Users can delete own decks" ON pitch_decks
+  FOR DELETE USING (user_id = auth.uid() OR founder_id = auth.uid());
 
 DROP POLICY IF EXISTS "Investors can view decks" ON pitch_decks;
 CREATE POLICY "Investors can view decks" ON pitch_decks
   FOR SELECT USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type = 'investor')
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND user_type IN ('investor', 'admin'))
   );
 
 -- RLS Policies for coaching_sessions

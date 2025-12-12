@@ -24,12 +24,23 @@ export async function POST(req: NextRequest) {
 
     console.log(`Configuring Auth for project ${projectRef} with site URL: ${siteUrl}`);
 
-    // Build redirect URLs list (comma-separated string, not array)
+    // Build COMPLETE redirect URLs list (comma-separated string)
+    // Must include: localhost for dev, wildcard for preview deploys, and specific production URLs
     const redirectUrls = [
-      `${siteUrl}/**`,
-      `${siteUrl}/callback`,
+      // Localhost for development
+      'http://localhost:3000/auth/callback',
+      'http://localhost:3000/auth/confirm',
+      'http://localhost:3000/',
+      'http://localhost:5173/',
+      // Wildcard for all Vercel preview deploys
+      'https://*.vercel.app',
+      // Specific production URLs
       `${siteUrl}/auth/callback`,
+      `${siteUrl}/auth/confirm`,
+      `${siteUrl}/`,
     ].join(',');
+
+    console.log('Setting redirect URLs:', redirectUrls);
 
     // Update Auth configuration using correct Management API field names
     const authConfigResponse = await fetch(
@@ -47,12 +58,15 @@ export async function POST(req: NextRequest) {
       }
     );
 
+    const responseText = await authConfigResponse.text();
+    console.log('Auth config response status:', authConfigResponse.status);
+    console.log('Auth config response:', responseText);
+
     if (!authConfigResponse.ok) {
-      const error = await authConfigResponse.text();
-      console.error('Failed to configure Auth:', error);
+      console.error('Failed to configure Auth with additional_redirect_urls:', responseText);
 
       // Try alternate field name if first attempt fails
-      console.log('Trying alternate field names...');
+      console.log('Trying uri_allow_list field name...');
       const retryResponse = await fetch(
         `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/config/auth`,
         {
@@ -68,11 +82,14 @@ export async function POST(req: NextRequest) {
         }
       );
 
-      if (!retryResponse.ok) {
-        const retryError = await retryResponse.text();
-        console.error('Retry also failed:', retryError);
+      const retryText = await retryResponse.text();
+      console.log('Retry response status:', retryResponse.status);
+      console.log('Retry response:', retryText);
 
-        // Just try to set site_url alone
+      if (!retryResponse.ok) {
+        console.error('Retry also failed:', retryText);
+
+        // Just try to set site_url alone as last resort
         console.log('Trying site_url only...');
         const siteOnlyResponse = await fetch(
           `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/config/auth`,
@@ -96,14 +113,16 @@ export async function POST(req: NextRequest) {
             projectRef,
             siteUrl,
             message: 'Site URL set. Add redirect URLs manually in Supabase dashboard.',
+            requiredUrls: redirectUrls.split(','),
           });
         }
 
         return NextResponse.json({
           success: false,
-          warning: `Auth config update failed: ${retryError}`,
-          message: 'You may need to manually set Site URL in Supabase dashboard',
-        });
+          warning: `Auth config update failed: ${retryText}`,
+          message: 'You may need to manually set Site URL and redirect URLs in Supabase dashboard',
+          requiredUrls: redirectUrls.split(','),
+        }, { status: 500 });
       }
     }
 

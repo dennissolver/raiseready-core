@@ -592,9 +592,9 @@ export default function SetupWizard() {
       // ========== Step 5: Configure Auth & Create Admin ==========
       console.log('Configuring Supabase auth...');
 
-      // Configure auth redirect URLs
+      // Configure auth redirect URLs - PROPERLY CHECK RESPONSE
       try {
-        await fetch('/api/setup/configure-supabase-auth', {
+        const authRes = await fetch('/api/setup/configure-supabase-auth', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -602,9 +602,33 @@ export default function SetupWizard() {
             siteUrl: vercelUrl,
           }),
         });
+
+        const authResult = await authRes.json();
+
+        if (authResult.success) {
+          console.log('✅ Supabase Auth configured with URLs:', authResult.redirectUrls);
+        } else if (authResult.partial) {
+          console.warn('⚠️ Supabase Auth partial config:', authResult.message);
+          console.warn('Add these URLs manually in Supabase Dashboard → Auth → URL Configuration:');
+          console.warn(authResult.requiredUrls);
+        } else {
+          console.error('❌ Supabase Auth config failed:', authResult);
+          console.error('Add these URLs manually in Supabase Dashboard → Auth → URL Configuration:');
+          console.error([
+            'http://localhost:3000/auth/callback',
+            'http://localhost:3000/auth/confirm',
+            'http://localhost:3000/',
+            'http://localhost:5173/',
+            'https://*.vercel.app',
+            `${vercelUrl}/auth/callback`,
+            `${vercelUrl}/auth/confirm`,
+            `${vercelUrl}/`,
+          ]);
+        }
       } catch (authErr) {
-        console.warn('Auth config warning:', authErr);
+        console.error('Auth config network error:', authErr);
       }
+
 
       // Create admin user
       console.log('Creating admin user...');
