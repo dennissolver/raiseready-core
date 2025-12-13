@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import sodium from 'libsodium-wrappers';
 
 const GITHUB_API = 'https://api.github.com';
 
@@ -28,6 +29,66 @@ function sanitizeColor(color: string | undefined, fallback: string): string {
   }
   console.warn(`Invalid color value "${color}", using fallback "${fallback}"`);
   return fallback;
+}
+
+// ============================================================================
+// GITHUB SECRETS HELPER
+// ============================================================================
+
+async function setGithubRepoSecret(
+  owner: string,
+  repo: string,
+  secretName: string,
+  secretValue: string,
+  headers: HeadersInit
+): Promise<boolean> {
+  try {
+    // Ensure sodium is ready
+    await sodium.ready;
+
+    // Step 1: Get the repo's public key for encrypting secrets
+    const keyResponse = await fetch(
+      `${GITHUB_API}/repos/${owner}/${repo}/actions/secrets/public-key`,
+      { headers }
+    );
+
+    if (!keyResponse.ok) {
+      console.error(`Failed to get public key for ${owner}/${repo}:`, await keyResponse.text());
+      return false;
+    }
+
+    const { key, key_id } = await keyResponse.json();
+
+    // Step 2: Encrypt the secret using libsodium sealed box
+    const binkey = sodium.from_base64(key, sodium.base64_variants.ORIGINAL);
+    const binsec = sodium.from_string(secretValue);
+    const encBytes = sodium.crypto_box_seal(binsec, binkey);
+    const encryptedValue = sodium.to_base64(encBytes, sodium.base64_variants.ORIGINAL);
+
+    // Step 3: Create or update the secret
+    const createResponse = await fetch(
+      `${GITHUB_API}/repos/${owner}/${repo}/actions/secrets/${secretName}`,
+      {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          encrypted_value: encryptedValue,
+          key_id: key_id,
+        }),
+      }
+    );
+
+    if (!createResponse.ok && createResponse.status !== 201 && createResponse.status !== 204) {
+      console.error(`Failed to set secret ${secretName}:`, await createResponse.text());
+      return false;
+    }
+
+    console.log(`✅ Set GitHub secret: ${secretName} for ${owner}/${repo}`);
+    return true;
+  } catch (error) {
+    console.error(`Error setting secret ${secretName}:`, error);
+    return false;
+  }
 }
 
 // ============================================================================
@@ -127,6 +188,8 @@ export async function POST(req: NextRequest) {
       'X-GitHub-Api-Version': '2022-11-28',
     };
 
+    let secretsConfigured = false;
+
     // Skip repo creation if pushConfigOnly is true
     if (!pushConfigOnly) {
       console.log(`Creating repo ${owner}/${repoName} from template ${templateOwner}/${templateRepo}...`);
@@ -155,6 +218,44 @@ export async function POST(req: NextRequest) {
       }
 
       await sleep(3000);
+
+      // ========================================================================
+      // SET GITHUB ACTIONS SECRETS
+      // ========================================================================
+      console.log('Setting GitHub Actions secrets...');
+
+      const secretsToSet: { name: string; value: string | undefined }[] = [
+        {
+          name: 'SUPABASE_ACCESS_TOKEN',
+          value: process.env.SUPABASE_ACCESS_TOKEN,
+        },
+        // Add any other secrets your client repos need:
+        // {
+        //   name: 'ANOTHER_SECRET',
+        //   value: process.env.ANOTHER_SECRET,
+        // },
+      ];
+
+      let allSecretsSet = true;
+      for (const secret of secretsToSet) {
+        if (secret.value) {
+          const success = await setGithubRepoSecret(
+            owner,
+            repoName,
+            secret.name,
+            secret.value,
+            headers
+          );
+          if (!success) {
+            console.warn(`⚠️ Failed to set secret: ${secret.name}`);
+            allSecretsSet = false;
+          }
+        } else {
+          console.warn(`⚠️ Skipping ${secret.name} - no value in environment`);
+          allSecretsSet = false;
+        }
+      }
+      secretsConfigured = allSecretsSet;
     }
 
     if (skipConfigUpdate) {
@@ -165,6 +266,7 @@ export async function POST(req: NextRequest) {
         repoName: repoName,
         cloneUrl: `https://github.com/${owner}/${repoName}.git`,
         configUpdated: false,
+        secretsConfigured,
         phase: 'repo-created',
       });
     }
@@ -283,6 +385,7 @@ export async function POST(req: NextRequest) {
       configUpdated: fileUpdated,
       logoUpdated,
       ogImageUpdated,
+      secretsConfigured,
       phase: pushConfigOnly ? 'config-pushed' : 'complete',
     });
 
@@ -348,7 +451,7 @@ export const clientConfig = {
   // Platform Configuration
   platformType: "${platformType}" as const,
   platformMode: "${platformMode}" as const,
-  
+
   company: {
     name: "${formData.companyName}",
     legalName: "${formData.companyName}",
@@ -361,7 +464,7 @@ export const clientConfig = {
     social: { linkedin: "", twitter: "", youtube: "" },
     logo: { light: "/logo-light.svg", dark: "/logo-dark.svg", favicon: "/favicon.ico" },
   },
-  
+
   admin: {
     firstName: "${formData.adminFirstName}",
     lastName: "${formData.adminLastName}",
@@ -370,9 +473,9 @@ export const clientConfig = {
     position: "${content.adminPosition}",
     linkedIn: "",
   },
-  
+
   offices: [{ city: "Office", country: "", address: "", phone: "${formData.companyPhone}", isPrimary: true }],
-  
+
   theme: {
     mode: "dark" as const,
     colors: {
@@ -394,7 +497,7 @@ export const clientConfig = {
     fonts: { heading: "Inter", body: "Inter" },
     borderRadius: "0.5rem",
   },
-  
+
   coaching: {
     coachName: "${formData.agentName}",
     coachPersonality: "${formData.voiceType}",
@@ -402,68 +505,38 @@ export const clientConfig = {
     scoringFocus: "${content.scoringFocus}" as const,
     scoringCriteria: ${JSON.stringify(content.scoringCriteria, null, 6).replace(/\n/g, '\n    ')},
     welcomeMessages: {
-      discovery: "${content.welcomeMessages.discovery.replace(/"/g, '\\"')}",
-      practice: "${content.welcomeMessages.practice.replace(/"/g, '\\"')}",
-      simulation: "${content.welcomeMessages.simulation.replace(/"/g, '\\"')}",
+      discovery: \`${content.welcomeMessages.discovery}\`,
+      practice: \`${content.welcomeMessages.practice}\`,
+      simulation: \`${content.welcomeMessages.simulation}\`,
     },
+    features: ${JSON.stringify(content.features, null, 6).replace(/\n/g, '\n    ')},
   },
-  
-  platform: {
-    urlPrefix: "${repoName.replace(/-pitch|-law/g, '')}",
-    adminRole: "portal_admin",
-    features: ${JSON.stringify(content.features)},
-    founderJourney: ${JSON.stringify(content.founderJourney, null, 6).replace(/\n/g, '\n    ')},
-    readinessLevels: ${JSON.stringify(content.readinessLevels, null, 6).replace(/\n/g, '\n    ')},
-  },
-  
-  services: {
-    supabase: { projectId: "${resources.supabaseProjectId || ''}", url: "${resources.supabaseUrl || ''}" },
-    vercel: { projectId: "", deploymentUrl: "https://${repoName}.vercel.app" },
-    elevenlabs: { agentId: "${resources.elevenlabsAgentId || ''}", voiceId: "" },
-  },
-  
+
+  founderJourney: ${JSON.stringify(content.founderJourney, null, 4).replace(/\n/g, '\n  ')},
+
+  readinessLevels: ${JSON.stringify(content.readinessLevels, null, 4).replace(/\n/g, '\n  ')},
+
   footer: {
     description: "${content.footerDescription}",
-    serviceLinks: ${JSON.stringify(content.serviceLinks)},
-    companyLinks: [{ label: "About", href: "/about" }, { label: "Contact", href: "/contact" }],
-    legalLinks: [{ label: "Privacy Policy", href: "/privacy" }, { label: "Terms of Service", href: "/terms" }],
-    copyright: "© ${new Date().getFullYear()} ${formData.companyName}. All rights reserved.",
   },
-  
-  legal: { privacyUrl: "/privacy", termsUrl: "/terms", copyrightYear: ${new Date().getFullYear()}, complianceRegions: ["GDPR", "CCPA"] },
-  
-  thesis: ${JSON.stringify(content.thesis, null, 4).replace(/\n/g, '\n  ')},
-  
-  landing: {
-    hero: ${JSON.stringify(content.hero, null, 6).replace(/\n/g, '\n    ')},
-    stats: ${JSON.stringify(content.stats, null, 6).replace(/\n/g, '\n    ')},
-    valueProps: ${JSON.stringify(content.valueProps, null, 6).replace(/\n/g, '\n    ')},
-    howItWorks: ${JSON.stringify(content.howItWorks, null, 6).replace(/\n/g, '\n    ')},
-  },
-  
-  ${content.extraConfig ? content.extraConfig : ''}
-};
 
-export const getCompanyName = () => clientConfig.company.name;
-export const getAdminName = () => \`\${clientConfig.admin.firstName} \${clientConfig.admin.lastName}\`;
-export const getAdminRole = () => clientConfig.platform.adminRole;
-export const getUrlPrefix = () => clientConfig.platform.urlPrefix;
-export const getCoachName = () => clientConfig.coaching.coachName;
-export const getPlatformType = () => clientConfig.platformType;
-export const getPlatformMode = () => clientConfig.platformMode;
-export const isScreeningMode = () => clientConfig.platformMode === 'screening';
-export const isCoachingMode = () => clientConfig.platformMode === 'coaching';
-export const getPortalRoute = (path: string) => \`/\${clientConfig.platform.urlPrefix}\${path}\`;
-export const getThemeColor = (color: keyof typeof clientConfig.theme.colors) => clientConfig.theme.colors[color];
-export const replaceTemplateVars = (text: string): string => {
-  return text
-    .replace(/{company}/g, clientConfig.company.name)
-    .replace(/{coach}/g, clientConfig.coaching.coachName)
-    .replace(/{year}/g, String(clientConfig.legal.copyrightYear))
-    .replace(/{admin}/g, getAdminName())
-    .replace(/{email}/g, clientConfig.company.supportEmail);
-};
-export const isFeatureEnabled = (feature: keyof typeof clientConfig.platform.features) => clientConfig.platform.features[feature];
+  services: {
+    links: ${JSON.stringify(content.serviceLinks, null, 6).replace(/\n/g, '\n    ')},
+  },
+
+  thesis: ${JSON.stringify(content.thesis, null, 4).replace(/\n/g, '\n  ')},
+
+  hero: ${JSON.stringify(content.hero, null, 4).replace(/\n/g, '\n  ')},
+
+  stats: ${JSON.stringify(content.stats, null, 4).replace(/\n/g, '\n  ')},
+
+  valueProps: ${JSON.stringify(content.valueProps, null, 4).replace(/\n/g, '\n  ')},
+
+  howItWorks: ${JSON.stringify(content.howItWorks, null, 4).replace(/\n/g, '\n  ')},
+
+  ${content.extraConfig || ''}
+} as const;
+
 export type ClientConfig = typeof clientConfig;
 `;
 }
@@ -472,108 +545,140 @@ export type ClientConfig = typeof clientConfig;
 // PLATFORM-SPECIFIC CONTENT
 // ============================================================================
 
+interface PlatformContent {
+  tagline: string;
+  description: string;
+  adminPosition: string;
+  scoringFocus: string;
+  scoringCriteria: Array<{ key: string; label: string; weight: number }>;
+  welcomeMessages: { discovery: string; practice: string; simulation: string };
+  features: Record<string, boolean>;
+  founderJourney: Array<{ id: string; label: string; icon: string }>;
+  readinessLevels: Array<{ key: string; label: string; minScore: number; color: string }>;
+  footerDescription: string;
+  serviceLinks: Array<{ label: string; href: string }>;
+  thesis: {
+    focusAreas: string[];
+    sectors: string[];
+    stages: string[];
+    geographies: string[];
+    ticketSize: { min: string; max: string; sweet: string };
+    philosophy: string;
+    idealFounder: string;
+    dealBreakers: string[];
+  };
+  hero: {
+    headline: string;
+    subHeadline: string;
+    ctaText: string;
+    ctaLink: string;
+    secondaryCtaText: string;
+    secondaryCtaLink: string;
+  };
+  stats: Array<{ value: string; label: string }>;
+  valueProps: Array<{ icon: string; title: string; description: string }>;
+  howItWorks: Array<{ step: number; title: string; description: string }>;
+  extraConfig?: string;
+}
+
 function getPlatformSpecificContent(
   platformType: string,
   platformConfig: PlatformConfig | undefined,
   formData: CreateGithubRequest['formData']
-) {
-  const coachName = formData.agentName;
+): PlatformContent {
   const companyName = formData.companyName;
+  const coachName = formData.agentName;
 
   // ============================================================================
-  // FOUNDER SERVICE PROVIDER (Law firms, accelerators, consultancies)
+  // FOUNDER SERVICE PROVIDER (Law firms, accelerators, etc.)
   // ============================================================================
   if (platformType === 'founder_service_provider') {
-    const providerType = platformConfig?.serviceProviderType || 'consultancy';
+    const providerType = platformConfig?.serviceProviderType || 'advisory';
     const providerLabel = getProviderLabel(providerType);
 
     return {
-      tagline: `Pitch Coaching for ${providerLabel} Clients`,
-      description: `Help your startup clients perfect their investor pitch with AI-powered coaching`,
-      adminPosition: "Partner",
-      scoringFocus: "pitch_quality",
+      tagline: `${providerLabel} Pitch Coaching`,
+      description: `Help your clients perfect their investor pitches with AI-powered coaching`,
+      adminPosition: "Managing Partner",
+      scoringFocus: "presentation_quality",
       scoringCriteria: [
-        { key: "problem_clarity", label: "Problem Clarity", weight: 0.12 },
-        { key: "solution_clarity", label: "Solution Clarity", weight: 0.12 },
-        { key: "market_sizing", label: "Market Sizing", weight: 0.10 },
-        { key: "business_model", label: "Business Model", weight: 0.12 },
-        { key: "competitive_position", label: "Competitive Positioning", weight: 0.10 },
-        { key: "team_credibility", label: "Team Credibility", weight: 0.12 },
-        { key: "traction", label: "Traction Evidence", weight: 0.10 },
-        { key: "ask_clarity", label: "Ask Clarity", weight: 0.10 },
-        { key: "storytelling", label: "Storytelling", weight: 0.06 },
-        { key: "visual_design", label: "Visual Design", weight: 0.06 },
+        { key: "clarity", label: "Message Clarity", weight: 0.20 },
+        { key: "story", label: "Story Compelling", weight: 0.20 },
+        { key: "confidence", label: "Confidence", weight: 0.15 },
+        { key: "structure", label: "Pitch Structure", weight: 0.15 },
+        { key: "q_and_a", label: "Q&A Readiness", weight: 0.15 },
+        { key: "time_management", label: "Time Management", weight: 0.10 },
+        { key: "visual_aids", label: "Visual Presentation", weight: 0.05 },
       ],
       welcomeMessages: {
-        discovery: `Welcome! I'm ${coachName}, your AI pitch coach provided by ${companyName}. Let's uncover the compelling story behind your startup.`,
-        practice: `Ready to practice? I'm ${coachName}, and I'll give you real-time feedback to sharpen your investor pitch.`,
-        simulation: `Let's simulate an investor meeting. I'll play different investor types so you're prepared for tough questions.`,
+        discovery: `Welcome! I'm ${coachName} from ${companyName}. I'll help you craft a compelling story that resonates with investors.`,
+        practice: `Ready to practice? Let's rehearse your pitch and polish your delivery.`,
+        simulation: `Let's do a full pitch simulation. I'll play the role of a skeptical investor.`,
       },
       features: {
         voiceCoaching: true,
         investorMatching: false,
         deckVersioning: true,
-        teamMembers: false,
+        teamMembers: true,
         analytics: true,
         apiAccess: false,
-        clientPortfolio: true,
-        progressTracking: true,
-        referralNetwork: platformConfig?.referralTrackingEnabled || false,
+        clientManagement: true,
+        referralTracking: platformConfig?.referralTrackingEnabled || false,
       },
       founderJourney: [
         { id: "upload", label: "Upload Deck", icon: "Upload" },
-        { id: "analysis", label: "AI Analysis", icon: "Brain" },
-        { id: "coaching", label: "Coaching Sessions", icon: "MessageSquare" },
+        { id: "profile", label: "Complete Profile", icon: "User" },
+        { id: "discovery", label: "Story Discovery", icon: "MessageSquare" },
+        { id: "refine", label: "Refine Message", icon: "Edit" },
         { id: "practice", label: "Practice Pitch", icon: "Mic" },
-        { id: "refine", label: "Refine & Improve", icon: "FileEdit" },
       ],
       readinessLevels: [
-        { key: "needs-work", label: "Needs Work", minScore: 0, color: "red" },
-        { key: "developing", label: "Developing", minScore: 40, color: "orange" },
-        { key: "good", label: "Good", minScore: 60, color: "yellow" },
-        { key: "excellent", label: "Investor Ready", minScore: 80, color: "green" },
+        { key: "developing", label: "Developing", minScore: 0, color: "red" },
+        { key: "progressing", label: "Progressing", minScore: 40, color: "orange" },
+        { key: "proficient", label: "Proficient", minScore: 60, color: "yellow" },
+        { key: "excellent", label: "Excellent", minScore: 80, color: "green" },
       ],
       footerDescription: `AI-powered pitch coaching for ${providerLabel.toLowerCase()} clients`,
       serviceLinks: [
         { label: "For Founders", href: "/signup/founder" },
-        { label: "Client Portal", href: "/login" },
+        { label: "Partner Portal", href: "/login" },
       ],
       thesis: {
-        focusAreas: ["Compelling narrative", "Clear problem-solution fit", "Strong presentation skills"],
-        sectors: platformConfig?.targetClientSectors || ["Technology", "Healthcare", "Fintech"],
+        focusAreas: platformConfig?.coachingFocusAreas || ["Pitch Delivery", "Storytelling", "Investor Q&A"],
+        sectors: platformConfig?.targetClientSectors || ["All Sectors"],
         stages: platformConfig?.targetClientStages || ["Pre-Seed", "Seed", "Series A"],
         geographies: ["Global"],
         ticketSize: { min: "N/A", max: "N/A", sweet: "N/A" },
-        philosophy: `${companyName} helps founders tell their story effectively and secure funding.`,
-        idealFounder: "Ambitious founders ready to refine their pitch and presentation skills.",
+        philosophy: formData.extractedThesis || `${companyName} helps founders tell their story with confidence and clarity.`,
+        idealFounder: "Founders preparing for investor conversations who want to maximize their chances of success.",
         dealBreakers: [],
       },
       hero: {
         headline: "Perfect Your Pitch",
-        subHeadline: `AI-powered coaching from ${companyName} to help you nail your investor presentation`,
+        subHeadline: `${companyName} helps founders craft compelling investor presentations`,
         ctaText: "Start Coaching",
         ctaLink: "/signup/founder",
         secondaryCtaText: "Learn More",
-        secondaryCtaLink: "#how-it-works",
+        secondaryCtaLink: "#features",
       },
       stats: [
-        { value: "10x", label: "Pitch Improvement" },
-        { value: "85%", label: "Client Satisfaction" },
-        { value: "24/7", label: "AI Coaching Available" },
-        { value: "100+", label: "Founders Coached" },
+        { value: "500+", label: "Founders Coached" },
+        { value: "85%", label: "Success Rate" },
+        { value: "2hrs", label: "Avg. Prep Time" },
+        { value: "4.9", label: "Client Rating" },
       ],
       valueProps: [
-        { icon: "Brain", title: "AI-Powered Analysis", description: "Get instant, detailed feedback on your pitch deck from our AI coach." },
-        { icon: "Mic", title: "Practice Sessions", description: "Rehearse your pitch with AI and get real-time coaching on delivery." },
-        { icon: "TrendingUp", title: "Track Improvement", description: "Monitor your pitch quality score as you refine your presentation." },
+        { icon: "Mic", title: "Voice Coaching", description: "Practice your pitch with AI that gives real-time feedback on delivery and content." },
+        { icon: "Target", title: "Personalized Focus", description: "Coaching tailored to your industry, stage, and specific investor targets." },
+        { icon: "TrendingUp", title: "Track Progress", description: "See your improvement over time with detailed analytics and scoring." },
       ],
       howItWorks: [
-        { step: 1, title: "Upload Your Deck", description: "Submit your pitch deck for comprehensive AI analysis." },
-        { step: 2, title: "Get Coached", description: "Work with our AI coach to improve each aspect of your pitch." },
-        { step: 3, title: "Practice & Perfect", description: "Rehearse until you're confident and investor-ready." },
+        { step: 1, title: "Upload Your Deck", description: "Share your current pitch materials for AI analysis." },
+        { step: 2, title: "Discover Your Story", description: "Work with our AI coach to refine your narrative." },
+        { step: 3, title: "Practice & Perfect", description: "Rehearse with voice coaching until you're investor-ready." },
       ],
       extraConfig: `serviceProvider: {
-    providerType: "${platformConfig?.serviceProviderType || 'consultancy'}",
+    providerType: "${providerType}",
     targetClientStages: ${JSON.stringify(platformConfig?.targetClientStages || [])},
     targetClientSectors: ${JSON.stringify(platformConfig?.targetClientSectors || [])},
     coachingFocusAreas: ${JSON.stringify(platformConfig?.coachingFocusAreas || [])},
@@ -586,28 +691,26 @@ function getPlatformSpecificContent(
   // IMPACT INVESTOR (SDG-focused)
   // ============================================================================
   if (platformType === 'impact_investor') {
-    const prioritySdgs = platformConfig?.prioritySdgs || [];
-    const sdgString = prioritySdgs.length > 0 ? prioritySdgs.map(n => `SDG ${n}`).join(', ') : 'All SDGs';
+    const prioritySdgs = platformConfig?.prioritySdgs || [1, 2, 3, 7, 13];
 
     return {
       tagline: "Impact-First Investing",
-      description: `Screen founders for financial returns AND measurable social/environmental impact`,
-      adminPosition: "Managing Partner",
-      scoringFocus: "impact_alignment",
+      description: `Screen startups for both financial returns and measurable social/environmental impact`,
+      adminPosition: "Impact Partner",
+      scoringFocus: "impact_potential",
       scoringCriteria: [
-        { key: "sdg_alignment", label: "SDG Alignment", weight: 0.20 },
-        { key: "impact_measurability", label: "Impact Measurability", weight: 0.15 },
-        { key: "theory_of_change", label: "Theory of Change", weight: 0.15 },
-        { key: "financial_viability", label: "Financial Viability", weight: 0.15 },
+        { key: "sdg_alignment", label: "SDG Alignment", weight: 0.25 },
+        { key: "impact_measurability", label: "Impact Measurability", weight: 0.20 },
+        { key: "financial_sustainability", label: "Financial Sustainability", weight: 0.15 },
+        { key: "scalability", label: "Impact Scalability", weight: 0.15 },
         { key: "team", label: "Team & Mission Fit", weight: 0.10 },
-        { key: "market", label: "Market Opportunity", weight: 0.10 },
-        { key: "traction", label: "Impact Traction", weight: 0.10 },
-        { key: "scalability", label: "Impact Scalability", weight: 0.05 },
+        { key: "theory_of_change", label: "Theory of Change", weight: 0.10 },
+        { key: "additionality", label: "Additionality", weight: 0.05 },
       ],
       welcomeMessages: {
-        discovery: `Welcome! I'm ${coachName} from ${companyName}. Let's explore how your startup creates meaningful impact aligned with the SDGs.`,
-        practice: `Ready to practice your impact pitch? I'll help you articulate both your financial and social returns.`,
-        simulation: `Let's simulate a meeting with an impact investor. I'll ask about your theory of change and impact metrics.`,
+        discovery: `Welcome! I'm ${coachName} from ${companyName}. I'm excited to learn about your impact story and how you're creating positive change.`,
+        practice: `Let's practice your impact pitch. I'll help you articulate both your financial and impact thesis clearly.`,
+        simulation: `I'll play the role of an impact investor. Be ready to discuss your theory of change and impact measurement.`,
       },
       features: {
         voiceCoaching: true,
@@ -616,88 +719,86 @@ function getPlatformSpecificContent(
         teamMembers: false,
         analytics: true,
         apiAccess: false,
-        sdgScoring: true,
-        impactMetrics: true,
-        blendedReturns: true,
+        impactScoring: true,
+        sdgMapping: true,
       },
       founderJourney: [
         { id: "upload", label: "Upload Deck", icon: "Upload" },
-        { id: "impact", label: "Impact Analysis", icon: "Heart" },
+        { id: "impact", label: "Impact Assessment", icon: "Target" },
         { id: "discovery", label: "Story Discovery", icon: "MessageSquare" },
         { id: "practice", label: "Practice Pitch", icon: "Mic" },
-        { id: "match", label: "Investor Matching", icon: "Target" },
+        { id: "match", label: "Investor Matching", icon: "Users" },
       ],
       readinessLevels: [
-        { key: "not-aligned", label: "Not Aligned", minScore: 0, color: "red" },
-        { key: "emerging", label: "Emerging Impact", minScore: 40, color: "orange" },
-        { key: "strong", label: "Strong Impact", minScore: 60, color: "yellow" },
-        { key: "exemplary", label: "Exemplary Impact", minScore: 80, color: "green" },
+        { key: "early-impact", label: "Early Impact", minScore: 0, color: "red" },
+        { key: "developing", label: "Developing", minScore: 40, color: "orange" },
+        { key: "impact-ready", label: "Impact Ready", minScore: 60, color: "yellow" },
+        { key: "investment-ready", label: "Investment Ready", minScore: 80, color: "green" },
       ],
-      footerDescription: "Impact-first investing with measurable outcomes",
+      footerDescription: "Connecting impact-driven founders with aligned capital",
       serviceLinks: [
-        { label: "For Impact Founders", href: "/signup/founder" },
+        { label: "For Founders", href: "/signup/founder" },
         { label: "Investor Portal", href: "/login" },
       ],
       thesis: {
-        focusAreas: ["SDG Alignment", "Measurable Impact", "Sustainable Business Model"],
-        sectors: ["CleanTech", "HealthTech", "EdTech", "AgTech", "FinTech for Good"],
-        stages: ["Pre-Seed", "Seed", "Series A"],
-        geographies: ["Global"],
-        ticketSize: { min: "$100K", max: "$5M", sweet: "$500K - $2M" },
-        philosophy: formData.extractedThesis || `${companyName} invests in founders creating measurable positive change aligned with ${sdgString}.`,
+        focusAreas: ["Climate Action", "Financial Inclusion", "Health Access", "Education"],
+        sectors: ["CleanTech", "FinTech for Good", "HealthTech", "EdTech", "AgriTech"],
+        stages: ["Seed", "Series A", "Series B"],
+        geographies: ["Global", "Emerging Markets"],
+        ticketSize: { min: "$250K", max: "$5M", sweet: "$1M - $3M" },
+        philosophy: formData.extractedThesis || `${companyName} invests in founders building solutions to humanity's greatest challenges.`,
         idealFounder: "Mission-driven founders with clear impact metrics and sustainable business models.",
-        dealBreakers: ["No clear impact thesis", "Unmeasurable outcomes", "Impact washing"],
+        dealBreakers: ["Impact washing", "No measurable outcomes", "Misaligned incentives"],
       },
       hero: {
-        headline: "Impact Meets Returns",
-        subHeadline: `${companyName} backs founders creating measurable social and environmental impact`,
-        ctaText: "Submit Your Pitch",
+        headline: "Invest in What Matters",
+        subHeadline: `${companyName} backs founders creating measurable positive impact`,
+        ctaText: "Submit Your Impact Venture",
         ctaLink: "/signup/founder",
         secondaryCtaText: "Our Impact Thesis",
         secondaryCtaLink: "#thesis",
       },
       stats: [
-        { value: "$50M+", label: "Impact Capital Deployed" },
+        { value: "$50M+", label: "Impact Capital" },
         { value: "30+", label: "Portfolio Companies" },
         { value: "12", label: "SDGs Addressed" },
-        { value: "1M+", label: "Lives Impacted" },
+        { value: "10M+", label: "Lives Impacted" },
       ],
       valueProps: [
-        { icon: "Heart", title: "Impact Alignment", description: "We score your alignment with UN Sustainable Development Goals." },
-        { icon: "Target", title: "Blended Returns", description: "We evaluate both financial returns and measurable impact." },
-        { icon: "Users", title: "Impact Network", description: "Connect with our network of impact-focused co-investors." },
+        { icon: "Globe", title: "Impact First", description: "We evaluate ventures on their potential for positive social and environmental change." },
+        { icon: "BarChart", title: "Measurable Outcomes", description: "Our AI assesses your impact metrics and theory of change." },
+        { icon: "Users", title: "Mission Alignment", description: "Connect with investors who share your commitment to making a difference." },
       ],
       howItWorks: [
-        { step: 1, title: "Submit Your Impact Pitch", description: "Upload your deck and impact metrics for AI analysis." },
-        { step: 2, title: "SDG Alignment Review", description: "We assess your theory of change and impact measurability." },
-        { step: 3, title: "Connect with Our Team", description: "High-scoring founders get fast-tracked to our investment team." },
+        { step: 1, title: "Share Your Impact", description: "Upload your deck and complete our impact assessment." },
+        { step: 2, title: "Get Scored", description: "Our AI evaluates SDG alignment and impact potential." },
+        { step: 3, title: "Connect", description: "High-scoring ventures connect directly with our impact team." },
       ],
       extraConfig: `impactInvestor: {
-    prioritySdgs: ${JSON.stringify(platformConfig?.prioritySdgs || [])},
+    prioritySdgs: ${JSON.stringify(prioritySdgs)},
     targetFinancialReturn: ${platformConfig?.targetFinancialReturn || 15},
     targetImpactReturn: ${platformConfig?.targetImpactReturn || 20},
-    usesRealChangeIndex: true,
+    impactFramework: "SDG-aligned",
   },`,
     };
   }
 
   // ============================================================================
-  // FAMILY OFFICE (Values-aligned, long-term)
+  // FAMILY OFFICE (Values & legacy focused)
   // ============================================================================
   if (platformType === 'family_office') {
     return {
       tagline: "Values-Aligned Investing",
-      description: `Long-term wealth stewardship aligned with family values and legacy`,
-      adminPosition: "Family Office Director",
+      description: `Screen opportunities aligned with family values and long-term legacy goals`,
+      adminPosition: "Family Office Principal",
       scoringFocus: "values_alignment",
       scoringCriteria: [
-        { key: "values_alignment", label: "Values Alignment", weight: 0.20 },
-        { key: "legacy_fit", label: "Legacy Fit", weight: 0.15 },
+        { key: "values_fit", label: "Values Alignment", weight: 0.25 },
+        { key: "long_term_vision", label: "Long-term Vision", weight: 0.20 },
         { key: "reputation_risk", label: "Reputation Risk", weight: 0.15 },
-        { key: "long_term_viability", label: "Long-term Viability", weight: 0.15 },
+        { key: "financial_stability", label: "Financial Stability", weight: 0.15 },
         { key: "team_integrity", label: "Team Integrity", weight: 0.10 },
-        { key: "market", label: "Market Opportunity", weight: 0.10 },
-        { key: "financial_health", label: "Financial Health", weight: 0.10 },
+        { key: "exit_flexibility", label: "Exit Flexibility", weight: 0.10 },
         { key: "governance", label: "Governance Quality", weight: 0.05 },
       ],
       welcomeMessages: {
