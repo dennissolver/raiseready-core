@@ -10,7 +10,12 @@ interface CreateVercelRequest {
     NEXT_PUBLIC_SUPABASE_ANON_KEY?: string;
     SUPABASE_SERVICE_ROLE_KEY?: string;
     NEXT_PUBLIC_ELEVENLABS_AGENT_ID?: string;
+    [key: string]: string | undefined;
   };
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 export async function POST(req: NextRequest) {
@@ -21,13 +26,11 @@ export async function POST(req: NextRequest) {
     const { projectName, githubRepo, envVars } = body as CreateVercelRequest;
 
     if (!projectName) {
-      console.error('Missing projectName');
-      return NextResponse.json({ error: 'Project name required', received: body }, { status: 400 });
+      return NextResponse.json({ error: 'Project name required' }, { status: 400 });
     }
 
     if (!githubRepo) {
-      console.error('Missing githubRepo');
-      return NextResponse.json({ error: 'GitHub repo required', received: body }, { status: 400 });
+      return NextResponse.json({ error: 'GitHub repo required' }, { status: 400 });
     }
 
     const token = process.env.VERCEL_TOKEN;
@@ -47,6 +50,7 @@ export async function POST(req: NextRequest) {
     // Ensure repo name includes owner
     const owner = process.env.GITHUB_OWNER || 'dennissolver';
     const fullRepoName = githubRepo.includes('/') ? githubRepo : `${owner}/${githubRepo}`;
+    const [repoOwner, repoName] = fullRepoName.split('/');
 
     // Step 1: Check if project already exists
     console.log(`Checking for existing Vercel project: ${projectName}`);
@@ -63,10 +67,14 @@ export async function POST(req: NextRequest) {
       console.log(`Project already exists: ${existingProject.id}`);
       projectId = existingProject.id;
       isExistingProject = true;
+
+      // Check if Git is linked
+      if (!existingProject.link?.type) {
+        console.log('Project exists but no Git link, will link now');
+      }
     } else {
-      // Step 2: Create the project
-      console.log(`Creating Vercel project: ${projectName} linked to ${githubRepo}`);
-      console.log(`Linking to GitHub repo: ${fullRepoName}`);
+      // Step 2: Create the project with GitHub integration
+      console.log(`Creating Vercel project: ${projectName} linked to ${fullRepoName}`);
 
       const createBody = {
         name: projectName,
@@ -75,6 +83,9 @@ export async function POST(req: NextRequest) {
           type: 'github',
           repo: fullRepoName,
         },
+        // Enable auto-deploys from GitHub
+        autoAssignCustomDomains: true,
+        autoAssignCustomDomainsUpdatedBy: "api",
       };
 
       const createResponse = await fetch(`${VERCEL_API}/v10/projects${teamParam}`, {
@@ -91,11 +102,15 @@ export async function POST(req: NextRequest) {
 
       const project = await createResponse.json();
       console.log('Project created:', project.id);
+      console.log('Git link:', project.link);
       projectId = project.id;
     }
 
-    // Step 3: Set environment variables (ALWAYS - for both new and existing projects)
-    const allEnvVars = {
+    // Small delay to ensure project is ready
+    await sleep(2000);
+
+    // Step 3: Set environment variables
+    const allEnvVars: Record<string, string | undefined> = {
       ...(envVars || {}),
       IS_ADMIN_PLATFORM: 'false',
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
@@ -103,49 +118,40 @@ export async function POST(req: NextRequest) {
       NEXT_PUBLIC_APP_URL: `https://${projectName}.vercel.app`,
     };
 
-    console.log(`Setting ${Object.keys(allEnvVars).length} environment variables...`);
+    console.log(`Setting ${Object.keys(allEnvVars).filter(k => allEnvVars[k]).length} environment variables...`);
+
+    // Get existing env vars
+    const existingEnvsResponse = await fetch(
+      `${VERCEL_API}/v10/projects/${projectId}/env${teamParam}`,
+      { headers }
+    );
+
+    const existingEnvs = existingEnvsResponse.ok
+      ? (await existingEnvsResponse.json()).envs || []
+      : [];
 
     for (const [key, value] of Object.entries(allEnvVars)) {
       if (!value) continue;
 
       try {
-        // First, try to check if the env var already exists
-        const checkEnvResponse = await fetch(
-          `${VERCEL_API}/v10/projects/${projectId}/env${teamParam}`,
-          { headers }
-        );
+        const existingEnv = existingEnvs.find((env: any) => env.key === key);
+        const envType = key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted';
 
-        let existingEnvId: string | null = null;
-
-        if (checkEnvResponse.ok) {
-          const existingEnvs = await checkEnvResponse.json();
-          const existingEnv = existingEnvs.envs?.find((env: any) => env.key === key);
-          if (existingEnv) {
-            existingEnvId = existingEnv.id;
-          }
-        }
-
-        if (existingEnvId) {
+        if (existingEnv) {
           // Update existing env var
           const updateResponse = await fetch(
-            `${VERCEL_API}/v10/projects/${projectId}/env/${existingEnvId}${teamParam}`,
+            `${VERCEL_API}/v10/projects/${projectId}/env/${existingEnv.id}${teamParam}`,
             {
               method: 'PATCH',
               headers,
               body: JSON.stringify({
                 value,
-                type: key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted',
+                type: envType,
                 target: ['production', 'preview', 'development'],
               }),
             }
           );
-
-          if (updateResponse.ok) {
-            console.log(`Updated env var: ${key}`);
-          } else {
-            const errText = await updateResponse.text();
-            console.warn(`Failed to update env var ${key}:`, errText);
-          }
+          console.log(`Updated env var: ${key} - ${updateResponse.ok ? 'success' : 'failed'}`);
         } else {
           // Create new env var
           const createEnvResponse = await fetch(
@@ -156,7 +162,7 @@ export async function POST(req: NextRequest) {
               body: JSON.stringify({
                 key,
                 value,
-                type: key.startsWith('NEXT_PUBLIC_') ? 'plain' : 'encrypted',
+                type: envType,
                 target: ['production', 'preview', 'development'],
               }),
             }
@@ -166,27 +172,30 @@ export async function POST(req: NextRequest) {
             console.log(`Created env var: ${key}`);
           } else {
             const errText = await createEnvResponse.text();
-            // Don't fail on duplicate - might be a race condition
             if (!errText.includes('already exists')) {
               console.warn(`Failed to create env var ${key}:`, errText);
-            } else {
-              console.log(`Env var ${key} already exists, skipping`);
             }
           }
         }
       } catch (err) {
         console.warn(`Error setting env var ${key}:`, err);
-        // Continue with other env vars
       }
     }
 
     console.log('Environment variables configured');
 
-    // Step 4: Trigger deployment (since GitHub code was pushed before Vercel project existed)
-    console.log('Triggering deployment...');
+    // Small delay before triggering deployment
+    await sleep(1000);
+
+    // Step 4: Trigger deployment using the v13/deployments endpoint with gitSource
+    // This ensures the deployment uses the GitHub integration properly
+    console.log('Triggering initial deployment...');
     let deploymentId = '';
+    let deploymentUrl = '';
+    let deploymentState = '';
 
     try {
+      // First try: Create deployment via git source (triggers GitHub integration flow)
       const deployResponse = await fetch(
         `${VERCEL_API}/v13/deployments${teamParam}`,
         {
@@ -208,27 +217,75 @@ export async function POST(req: NextRequest) {
       if (deployResponse.ok) {
         const deployment = await deployResponse.json();
         deploymentId = deployment.id || deployment.uid || '';
-        console.log('✅ Deployment triggered:', deploymentId);
+        deploymentUrl = deployment.url || `${projectName}.vercel.app`;
+        deploymentState = deployment.readyState || 'QUEUED';
+        console.log('✅ Deployment triggered via gitSource:', deploymentId);
+        console.log('Deployment state:', deploymentState);
       } else {
         const deployError = await deployResponse.text();
-        console.warn('Deployment trigger warning:', deployError);
-        // Don't fail - the project is created, deployment can be done manually
+        console.warn('gitSource deployment failed:', deployError);
+
+        // Fallback: Try triggering via GitHub webhook endpoint
+        console.log('Trying webhook trigger...');
+
+        const webhookResponse = await fetch(
+          `${VERCEL_API}/v1/integrations/deploy/${projectId}/${repoName}${teamParam}`,
+          {
+            method: 'POST',
+            headers,
+          }
+        );
+
+        if (webhookResponse.ok) {
+          const webhookResult = await webhookResponse.json();
+          console.log('✅ Deployment triggered via webhook:', webhookResult);
+        } else {
+          // Final fallback: just redeploy whatever is there
+          console.log('Trying production redeploy...');
+
+          const redeployResponse = await fetch(
+            `${VERCEL_API}/v13/deployments${teamParam}`,
+            {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                name: projectName,
+                project: projectId,
+                target: 'production',
+              }),
+            }
+          );
+
+          if (redeployResponse.ok) {
+            const redeploy = await redeployResponse.json();
+            deploymentId = redeploy.id || redeploy.uid || '';
+            deploymentUrl = redeploy.url || `${projectName}.vercel.app`;
+            console.log('✅ Redeployment triggered:', deploymentId);
+          } else {
+            console.warn('All deployment methods failed - manual deploy may be needed');
+          }
+        }
       }
     } catch (deployErr) {
       console.warn('Deployment trigger error:', deployErr);
-      // Don't fail - the project is created
     }
 
-    const deploymentUrl = `https://${projectName}.vercel.app`;
+    const finalUrl = `https://${projectName}.vercel.app`;
 
     return NextResponse.json({
       success: true,
       projectId,
       projectName,
-      url: deploymentUrl,
+      url: finalUrl,
       deploymentId,
+      deploymentUrl: deploymentUrl ? `https://${deploymentUrl}` : finalUrl,
+      deploymentState,
       isExistingProject,
-      envVarsConfigured: Object.keys(allEnvVars).filter(k => allEnvVars[k as keyof typeof allEnvVars]).length,
+      envVarsConfigured: Object.keys(allEnvVars).filter(k => allEnvVars[k]).length,
+      githubRepo: fullRepoName,
+      message: deploymentId
+        ? 'Project created and deployment triggered'
+        : 'Project created - first push to main branch will trigger deployment',
     });
 
   } catch (error) {

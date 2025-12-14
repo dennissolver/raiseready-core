@@ -1,11 +1,73 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_MANAGEMENT_API = 'https://api.supabase.com/v1';
 
 interface CreateSupabaseRequest {
   projectName: string;
   clientId?: string;
+}
+
+async function waitForProjectReady(
+  projectRef: string,
+  accessToken: string,
+  maxAttempts = 30
+): Promise<{ ready: boolean; status: string }> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const statusResponse = await fetch(
+        `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}`,
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        console.log(`Project status (attempt ${i + 1}/${maxAttempts}): ${statusData.status}`);
+
+        if (statusData.status === 'ACTIVE_HEALTHY') {
+          return { ready: true, status: statusData.status };
+        }
+      }
+    } catch (err) {
+      console.warn(`Status check attempt ${i + 1} failed:`, err);
+    }
+
+    await sleep(10000);
+  }
+
+  return { ready: false, status: 'TIMEOUT' };
+}
+
+async function waitForServicesHealthy(
+  projectRef: string,
+  accessToken: string,
+  maxAttempts = 10
+): Promise<{ healthy: boolean; services: any[] }> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const healthResponse = await fetch(
+        `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/health`,
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+
+      if (healthResponse.ok) {
+        const services = await healthResponse.json();
+        console.log(`Health check (attempt ${i + 1}):`, services.map((s: any) => `${s.name}: ${s.status}`).join(', '));
+
+        const allHealthy = services.every((s: any) => s.status === 'ACTIVE_HEALTHY');
+        const authHealthy = services.find((s: any) => s.name === 'auth')?.status === 'ACTIVE_HEALTHY';
+
+        if (allHealthy || (authHealthy && i >= 3)) {
+          return { healthy: true, services };
+        }
+      }
+    } catch (err) {
+      console.warn(`Health check attempt ${i + 1} failed:`, err);
+    }
+
+    await sleep(5000);
+  }
+
+  return { healthy: false, services: [] };
 }
 
 export async function POST(req: NextRequest) {
@@ -26,7 +88,7 @@ export async function POST(req: NextRequest) {
 
     // Step 1: Check if project already exists
     console.log(`Checking for existing Supabase project: ${projectName}`);
-    
+
     const listResponse = await fetch(`${SUPABASE_MANAGEMENT_API}/projects`, {
       headers: { 'Authorization': `Bearer ${accessToken}` },
     });
@@ -34,14 +96,15 @@ export async function POST(req: NextRequest) {
     if (listResponse.ok) {
       const projects = await listResponse.json();
       const existing = projects.find((p: any) => p.name === projectName);
-      
+
       if (existing) {
         console.log(`Project already exists: ${existing.id}`);
-        
+
         // Get API keys for existing project
-        const keysResponse = await fetch(`${SUPABASE_MANAGEMENT_API}/projects/${existing.id}/api-keys`, {
-          headers: { 'Authorization': `Bearer ${accessToken}` },
-        });
+        const keysResponse = await fetch(
+          `${SUPABASE_MANAGEMENT_API}/projects/${existing.id}/api-keys`,
+          { headers: { 'Authorization': `Bearer ${accessToken}` } }
+        );
 
         if (keysResponse.ok) {
           const keys = await keysResponse.json();
@@ -64,7 +127,7 @@ export async function POST(req: NextRequest) {
     // Step 2: Create new project
     const dbPassword = generateSecurePassword();
     console.log(`Creating Supabase project: ${projectName}`);
-    
+
     const createResponse = await fetch(`${SUPABASE_MANAGEMENT_API}/projects`, {
       method: 'POST',
       headers: {
@@ -83,65 +146,66 @@ export async function POST(req: NextRequest) {
     if (!createResponse.ok) {
       const error = await createResponse.text();
       console.error('Supabase create error:', error);
-      
-      // Check if it's an "already exists" error
+
       if (error.includes('already exists')) {
-        return NextResponse.json({ 
-          success: true, 
+        return NextResponse.json({
+          success: true,
           skipped: true,
           message: 'Project already exists (could not fetch details)',
         });
       }
-      
+
       return NextResponse.json({ error: `Failed to create project: ${error}` }, { status: 500 });
     }
 
     const project = await createResponse.json();
     console.log('Project created:', project.id);
+    const projectRef = project.id;
 
     // Step 3: Wait for project to be ready
-    const projectRef = project.id;
-    let isReady = false;
-    let attempts = 0;
-    const maxAttempts = 30;
+    console.log('Waiting for project to be ready...');
+    const { ready, status } = await waitForProjectReady(projectRef, accessToken);
 
-    while (!isReady && attempts < maxAttempts) {
-      await sleep(10000);
-      attempts++;
+    if (!ready) {
+      console.warn(`Project not fully ready (status: ${status}), but returning keys anyway...`);
+    }
 
-      const statusResponse = await fetch(`${SUPABASE_MANAGEMENT_API}/projects/${projectRef}`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` },
-      });
+    // Step 4: Wait for services to be healthy (especially auth)
+    console.log('Checking service health...');
+    const { healthy, services } = await waitForServicesHealthy(projectRef, accessToken);
 
-      if (statusResponse.ok) {
-        const statusData = await statusResponse.json();
-        if (statusData.status === 'ACTIVE_HEALTHY') {
-          isReady = true;
-          console.log('Project is ready');
-        } else {
-          console.log(`Project status: ${statusData.status} (attempt ${attempts}/${maxAttempts})`);
+    if (!healthy) {
+      console.warn('Not all services are healthy yet, but proceeding...');
+    }
+
+    // Step 5: Get API keys
+    let anonKey = '';
+    let serviceKey = '';
+
+    for (let i = 0; i < 5; i++) {
+      const keysResponse = await fetch(
+        `${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/api-keys`,
+        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      );
+
+      if (keysResponse.ok) {
+        const keys = await keysResponse.json();
+        anonKey = keys.find((k: any) => k.name === 'anon')?.api_key || '';
+        serviceKey = keys.find((k: any) => k.name === 'service_role')?.api_key || '';
+
+        if (anonKey && serviceKey) {
+          console.log('API keys retrieved successfully');
+          break;
         }
       }
+
+      console.log(`Waiting for API keys (attempt ${i + 1})...`);
+      await sleep(3000);
     }
 
-    if (!isReady) {
-      return NextResponse.json({ 
-        success: true,
-        projectId: projectRef,
-        url: `https://${projectRef}.supabase.co`,
-        status: 'pending',
-        message: 'Project created but still initializing',
-      });
+    if (!anonKey || !serviceKey) {
+      console.warn('Could not retrieve API keys');
     }
-
-    // Step 4: Get API keys
-    const keysResponse = await fetch(`${SUPABASE_MANAGEMENT_API}/projects/${projectRef}/api-keys`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    });
-
-    const keys = keysResponse.ok ? await keysResponse.json() : [];
-    const anonKey = keys.find((k: any) => k.name === 'anon')?.api_key;
-    const serviceKey = keys.find((k: any) => k.name === 'service_role')?.api_key;
 
     return NextResponse.json({
       success: true,
@@ -150,12 +214,14 @@ export async function POST(req: NextRequest) {
       anonKey,
       serviceKey,
       dbPassword,
+      status: ready ? 'ready' : 'initializing',
+      servicesHealthy: healthy,
     });
 
   } catch (error) {
     console.error('Create Supabase error:', error);
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
 }
