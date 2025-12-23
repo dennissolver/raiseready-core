@@ -107,11 +107,6 @@ function MasterPlatformSelector() {
               <Link href="/login" className="text-gray-300 hover:text-white transition-colors">
                 Client Login
               </Link>
-              <Link href="/setup">
-                <Button className="bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 text-white">
-                  Create Platform
-                </Button>
-              </Link>
             </div>
           </div>
         </div>
