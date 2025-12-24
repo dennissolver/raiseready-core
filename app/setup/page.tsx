@@ -2,7 +2,7 @@
 
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw, Sparkles, Globe } from 'lucide-react';
 
 // ============================================================================
 // TYPES
@@ -21,6 +21,15 @@ interface Step {
   duration?: number;
 }
 
+interface ExtractedBranding {
+  company: { name: string; tagline: string; description: string; website: string };
+  colors: { primary: string; accent: string; background: string; text: string };
+  logo: { url: string | null; base64: string | null };
+  thesis: { focusAreas: string[]; sectors: string[]; philosophy: string };
+  contact: { email: string | null; phone: string | null; linkedin: string | null };
+  platformType: PlatformType;
+}
+
 interface FormData {
   companyName: string;
   companyWebsite: string;
@@ -32,18 +41,13 @@ interface FormData {
   agentName: string;
   voiceGender: 'female' | 'male';
   platformType: PlatformType;
+  branding: ExtractedBranding | null;
 }
 
 interface OrchestrationResult {
   success: boolean;
   platformUrl: string | null;
-  steps: Array<{
-    step: string;
-    status: string;
-    error?: string;
-    duration?: number;
-    data?: any;
-  }>;
+  steps: Array<{ step: string; status: string; error?: string; duration?: number; data?: any }>;
   resources: {
     supabase: { projectId: string; url: string } | null;
     github: { repoUrl: string; repoName: string } | null;
@@ -76,16 +80,11 @@ const INITIAL_STEPS: Step[] = [
 
 function StepIcon({ status }: { status: StepStatus }) {
   switch (status) {
-    case 'success':
-      return <CheckCircle className="w-6 h-6 text-green-500" />;
-    case 'error':
-      return <XCircle className="w-6 h-6 text-red-500" />;
-    case 'running':
-      return <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />;
-    case 'skipped':
-      return <Circle className="w-6 h-6 text-gray-400" />;
-    default:
-      return <Circle className="w-6 h-6 text-gray-600" />;
+    case 'success': return <CheckCircle className="w-6 h-6 text-green-500" />;
+    case 'error': return <XCircle className="w-6 h-6 text-red-500" />;
+    case 'running': return <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />;
+    case 'skipped': return <Circle className="w-6 h-6 text-gray-400" />;
+    default: return <Circle className="w-6 h-6 text-gray-600" />;
   }
 }
 
@@ -115,10 +114,17 @@ function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
           )}
         </div>
         <p className="text-sm text-gray-500">{step.description}</p>
-        {step.error && (
-          <p className="text-sm text-red-400 mt-1">{step.error}</p>
-        )}
+        {step.error && <p className="text-sm text-red-400 mt-1">{step.error}</p>}
       </div>
+    </div>
+  );
+}
+
+function ColorSwatch({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-6 h-6 rounded border border-gray-600" style={{ backgroundColor: color }} />
+      <span className="text-sm text-gray-400">{label}: {color}</span>
     </div>
   );
 }
@@ -132,16 +138,17 @@ function LoadingFallback() {
 }
 
 // ============================================================================
-// MAIN SETUP CONTENT (uses useSearchParams)
+// MAIN SETUP CONTENT
 // ============================================================================
 
 function SetupContent() {
   const searchParams = useSearchParams();
   const platformType = (searchParams.get('type') as PlatformType) || 'commercial_investor';
 
-  const [currentStep, setCurrentStep] = useState<'form' | 'creating' | 'success' | 'error'>('form');
+  const [currentStep, setCurrentStep] = useState<'form' | 'extracting' | 'review' | 'creating' | 'success' | 'error'>('form');
   const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
   const [result, setResult] = useState<OrchestrationResult | null>(null);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
     companyName: '',
     companyWebsite: '',
@@ -153,6 +160,7 @@ function SetupContent() {
     agentName: 'Maya',
     voiceGender: 'female',
     platformType,
+    branding: null,
   });
 
   const platformLabels: Record<PlatformType, string> = {
@@ -162,7 +170,66 @@ function SetupContent() {
     founder_service_provider: 'Founder Service Provider Platform',
   };
 
-  // Update step status based on orchestration results
+  // ============================================================================
+  // EXTRACTION
+  // ============================================================================
+
+  const handleExtract = async () => {
+    if (!formData.companyWebsite) {
+      setExtractionError('Please enter a website URL');
+      return;
+    }
+
+    setCurrentStep('extracting');
+    setExtractionError(null);
+
+    try {
+      const response = await fetch('/api/setup/extract-branding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ websiteUrl: formData.companyWebsite }),
+      });
+
+      const data = await response.json();
+
+      if (data.success && data.branding) {
+        setFormData(prev => ({
+          ...prev,
+          companyName: data.branding.company.name || prev.companyName,
+          companyEmail: data.branding.contact?.email || prev.companyEmail,
+          platformType: data.branding.platformType || prev.platformType,
+          branding: data.branding,
+        }));
+        setCurrentStep('review');
+      } else {
+        setExtractionError(data.error || 'Extraction failed');
+        setCurrentStep('form');
+      }
+    } catch (error: any) {
+      setExtractionError(error.message || 'Failed to extract branding');
+      setCurrentStep('form');
+    }
+  };
+
+  const handleSkipExtraction = () => {
+    setFormData(prev => ({
+      ...prev,
+      branding: {
+        company: { name: prev.companyName, tagline: 'AI-Powered Pitch Coaching', description: '', website: prev.companyWebsite },
+        colors: { primary: '#8B5CF6', accent: '#10B981', background: '#0F172A', text: '#F8FAFC' },
+        logo: { url: null, base64: null },
+        thesis: { focusAreas: [], sectors: [], philosophy: '' },
+        contact: { email: prev.companyEmail, phone: null, linkedin: null },
+        platformType: prev.platformType,
+      },
+    }));
+    setCurrentStep('review');
+  };
+
+  // ============================================================================
+  // ORCHESTRATION
+  // ============================================================================
+
   const updateStepsFromResult = (result: OrchestrationResult) => {
     setSteps(prev => prev.map(step => {
       const resultStep = result.steps.find(s => s.step === step.id);
@@ -180,8 +247,7 @@ function SetupContent() {
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreate = async () => {
     setCurrentStep('creating');
     setSteps(INITIAL_STEPS.map((s, i) => ({ ...s, status: i === 0 ? 'running' : 'pending' })));
 
@@ -200,31 +266,14 @@ function SetupContent() {
           agentName: formData.agentName,
           voiceGender: formData.voiceGender,
           platformMode: 'screening',
-          branding: {
-            company: {
-              name: formData.companyName,
-              tagline: 'AI-Powered Pitch Coaching',
-              description: `${formData.companyName} helps founders perfect their pitch.`,
-              website: formData.companyWebsite,
-            },
-            colors: { primary: '#8B5CF6', accent: '#10B981', background: '#0F172A', text: '#F8FAFC' },
-            logo: { url: null },
-            thesis: { focusAreas: [], sectors: [], philosophy: '' },
-            contact: { email: formData.companyEmail, phone: null, linkedin: null },
-            platformType: formData.platformType,
-          },
+          branding: formData.branding,
         }),
       });
 
       const data: OrchestrationResult = await response.json();
       setResult(data);
       updateStepsFromResult(data);
-
-      if (data.success) {
-        setCurrentStep('success');
-      } else {
-        setCurrentStep('error');
-      }
+      setCurrentStep(data.success ? 'success' : 'error');
     } catch (error: any) {
       setCurrentStep('error');
       setResult({
@@ -241,10 +290,11 @@ function SetupContent() {
     setCurrentStep('form');
     setSteps(INITIAL_STEPS);
     setResult(null);
+    setFormData(prev => ({ ...prev, branding: null }));
   };
 
   // ============================================================================
-  // RENDER: FORM
+  // RENDER: FORM (Initial)
   // ============================================================================
 
   if (currentStep === 'form') {
@@ -259,7 +309,104 @@ function SetupContent() {
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6 bg-slate-900 rounded-xl p-8">
+          <div className="space-y-6 bg-slate-900 rounded-xl p-8">
+            <div>
+              <label className="block text-sm font-medium mb-1">Company Website *</label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  required
+                  value={formData.companyWebsite}
+                  onChange={e => setFormData(prev => ({ ...prev, companyWebsite: e.target.value }))}
+                  className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="https://acme.vc"
+                />
+                <button
+                  type="button"
+                  onClick={handleExtract}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-medium transition-colors"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Extract
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">We'll extract your branding, colors, and logo automatically</p>
+              {extractionError && <p className="text-sm text-red-400 mt-2">{extractionError}</p>}
+            </div>
+
+            <div className="text-center text-gray-500">— or —</div>
+
+            <button
+              type="button"
+              onClick={handleSkipExtraction}
+              className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
+            >
+              Skip Extraction & Configure Manually
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: EXTRACTING
+  // ============================================================================
+
+  if (currentStep === 'extracting') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
+        <div className="max-w-2xl mx-auto text-center">
+          <Globe className="w-16 h-16 text-purple-500 mx-auto mb-4 animate-pulse" />
+          <h1 className="text-2xl font-bold mb-2">Extracting Branding</h1>
+          <p className="text-gray-400 mb-4">Analyzing {formData.companyWebsite}...</p>
+          <div className="flex items-center justify-center gap-2 text-purple-400">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span>Extracting colors, logo, and company info</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: REVIEW (After Extraction)
+  // ============================================================================
+
+  if (currentStep === 'review') {
+    const branding = formData.branding!;
+
+    return (
+      <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold mb-2">Review & Configure</h1>
+            <p className="text-gray-400">We extracted the following from your website</p>
+          </div>
+
+          <form onSubmit={(e) => { e.preventDefault(); handleCreate(); }} className="space-y-6 bg-slate-900 rounded-xl p-8">
+            {/* Extracted Branding Preview */}
+            <div className="bg-slate-800 rounded-lg p-4 space-y-3">
+              <h3 className="font-medium text-purple-400 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" /> Extracted Branding
+              </h3>
+              {branding.logo.url && (
+                <div className="flex items-center gap-3">
+                  <img src={branding.logo.base64 || branding.logo.url} alt="Logo" className="h-10 w-auto" />
+                  <span className="text-sm text-gray-400">Logo detected</span>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-4">
+                <ColorSwatch color={branding.colors.primary} label="Primary" />
+                <ColorSwatch color={branding.colors.accent} label="Accent" />
+                <ColorSwatch color={branding.colors.background} label="Background" />
+              </div>
+              <div className="text-sm text-gray-400">
+                Platform type: <span className="text-white">{platformLabels[branding.platformType]}</span>
+              </div>
+            </div>
+
+            {/* Company Info */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Company Information</h2>
 
@@ -270,19 +417,7 @@ function SetupContent() {
                   required
                   value={formData.companyName}
                   onChange={e => setFormData(prev => ({ ...prev, companyName: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder="Acme Ventures"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Company Website</label>
-                <input
-                  type="url"
-                  value={formData.companyWebsite}
-                  onChange={e => setFormData(prev => ({ ...prev, companyWebsite: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder="https://acme.vc"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                 />
               </div>
 
@@ -293,12 +428,12 @@ function SetupContent() {
                   required
                   value={formData.companyEmail}
                   onChange={e => setFormData(prev => ({ ...prev, companyEmail: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder="contact@acme.vc"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                 />
               </div>
             </div>
 
+            {/* Administrator */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Administrator</h2>
 
@@ -310,7 +445,7 @@ function SetupContent() {
                     required
                     value={formData.adminFirstName}
                     onChange={e => setFormData(prev => ({ ...prev, adminFirstName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
                 <div>
@@ -320,7 +455,7 @@ function SetupContent() {
                     required
                     value={formData.adminLastName}
                     onChange={e => setFormData(prev => ({ ...prev, adminLastName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
               </div>
@@ -332,7 +467,7 @@ function SetupContent() {
                   required
                   value={formData.adminEmail}
                   onChange={e => setFormData(prev => ({ ...prev, adminEmail: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                 />
               </div>
 
@@ -342,11 +477,12 @@ function SetupContent() {
                   type="tel"
                   value={formData.adminPhone}
                   onChange={e => setFormData(prev => ({ ...prev, adminPhone: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                 />
               </div>
             </div>
 
+            {/* AI Coach */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">AI Coach</h2>
 
@@ -357,7 +493,7 @@ function SetupContent() {
                     type="text"
                     value={formData.agentName}
                     onChange={e => setFormData(prev => ({ ...prev, agentName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
                 <div>
@@ -365,7 +501,7 @@ function SetupContent() {
                   <select
                     value={formData.voiceGender}
                     onChange={e => setFormData(prev => ({ ...prev, voiceGender: e.target.value as 'female' | 'male' }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                   >
                     <option value="female">Female</option>
                     <option value="male">Male</option>
@@ -486,7 +622,7 @@ function SetupContent() {
 }
 
 // ============================================================================
-// MAIN PAGE COMPONENT (wraps content in Suspense)
+// MAIN PAGE (Suspense wrapper)
 // ============================================================================
 
 export default function SetupPage() {
