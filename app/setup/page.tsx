@@ -2,14 +2,13 @@
 
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw, Sparkles, Globe, Trash2 } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw, Sparkles, Globe, Trash2, MinusCircle } from 'lucide-react';
 
 // ============================================================================
 // TYPES
 // ============================================================================
 
 type PlatformType = 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
-
 type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
 
 interface Step {
@@ -17,6 +16,7 @@ interface Step {
   label: string;
   description: string;
   status: StepStatus;
+  message?: string;
   error?: string;
   duration?: number;
   isCleanup?: boolean;
@@ -48,84 +48,103 @@ interface FormData {
 interface OrchestrationResult {
   success: boolean;
   platformUrl: string | null;
-  steps: Array<{ step: string; status: string; error?: string; duration?: number; data?: any }>;
+  steps: Array<{ step: string; status: string; message?: string; error?: string; duration?: number }>;
   resources: {
     supabase: { projectId: string; url: string } | null;
     github: { repoUrl: string; repoName: string } | null;
     vercel: { projectId: string; url: string } | null;
     elevenlabs: { agentId: string } | null;
   };
-  rollback?: { performed: boolean; results?: any };
+  rollback?: { performed: boolean };
   error?: string;
   duration?: number;
 }
 
 // ============================================================================
-// STEP DEFINITIONS - All steps including cleanup
+// STEP DEFINITIONS
 // ============================================================================
 
-const INITIAL_STEPS: Step[] = [
-  // Pre-cleanup steps
-  { id: 'cleanup-supabase', label: 'Checking existing Supabase', description: 'Looking for existing project to clean up', status: 'pending', isCleanup: true },
-  { id: 'cleanup-vercel', label: 'Checking existing Vercel', description: 'Looking for existing deployment to clean up', status: 'pending', isCleanup: true },
-  { id: 'cleanup-github', label: 'Checking existing GitHub', description: 'Looking for existing repository to clean up', status: 'pending', isCleanup: true },
+const STEP_CONFIG: Record<string, { label: string; description: string; isCleanup?: boolean }> = {
+  'cleanup-supabase': { label: 'Checking Supabase', description: 'Looking for existing project...', isCleanup: true },
+  'cleanup-vercel': { label: 'Checking Vercel', description: 'Looking for existing deployment...', isCleanup: true },
+  'cleanup-github': { label: 'Checking GitHub', description: 'Looking for existing repository...', isCleanup: true },
+  'create-supabase': { label: 'Creating Supabase', description: 'Setting up database...' },
+  'run-migrations': { label: 'Applying schema', description: 'Creating tables and policies...' },
+  'create-elevenlabs': { label: 'Creating voice agent', description: 'Setting up AI coaching...' },
+  'create-github': { label: 'Creating repository', description: 'Pushing platform code...' },
+  'create-vercel': { label: 'Creating deployment', description: 'Configuring hosting...' },
+  'configure-auth': { label: 'Configuring auth', description: 'Setting up login...' },
+  'trigger-deployment': { label: 'Deploying platform', description: 'Building your site...' },
+  'send-welcome-email': { label: 'Sending welcome email', description: 'Notifying admin...' },
+};
 
-  // Creation steps
-  { id: 'create-supabase', label: 'Creating Supabase project', description: 'Setting up database and authentication', status: 'pending' },
-  { id: 'wait-supabase', label: 'Waiting for Supabase', description: 'Project initializing...', status: 'pending' },
-  { id: 'run-migrations', label: 'Applying database schema', description: 'Creating tables, policies, and storage', status: 'pending' },
-  { id: 'create-elevenlabs', label: 'Creating voice agent', description: 'Setting up AI voice coaching', status: 'pending' },
-  { id: 'create-github', label: 'Setting up repository', description: 'Creating codebase from template', status: 'pending' },
-  { id: 'create-vercel', label: 'Creating deployment', description: 'Configuring hosting and environment', status: 'pending' },
-  { id: 'configure-auth', label: 'Configuring authentication', description: 'Setting up login redirects', status: 'pending' },
-  { id: 'trigger-deployment', label: 'Deploying platform', description: 'Building and launching your site', status: 'pending' },
-  { id: 'send-welcome-email', label: 'Sending welcome email', description: 'Notifying administrator', status: 'pending' },
+const STEP_ORDER = [
+  'cleanup-supabase', 'cleanup-vercel', 'cleanup-github',
+  'create-supabase', 'run-migrations', 'create-elevenlabs',
+  'create-github', 'create-vercel', 'configure-auth',
+  'trigger-deployment', 'send-welcome-email',
 ];
+
+function getInitialSteps(): Step[] {
+  return STEP_ORDER.map(id => ({
+    id,
+    label: STEP_CONFIG[id].label,
+    description: STEP_CONFIG[id].description,
+    status: 'pending' as StepStatus,
+    isCleanup: STEP_CONFIG[id].isCleanup,
+  }));
+}
 
 // ============================================================================
 // COMPONENTS
 // ============================================================================
 
 function StepIcon({ status, isCleanup }: { status: StepStatus; isCleanup?: boolean }) {
-  if (isCleanup) {
-    switch (status) {
-      case 'success': return <Trash2 className="w-5 h-5 text-orange-500" />;
-      case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
-      case 'running': return <Loader2 className="w-5 h-5 text-orange-400 animate-spin" />;
-      case 'skipped': return <Circle className="w-5 h-5 text-gray-500" />;
-      default: return <Circle className="w-5 h-5 text-gray-600" />;
-    }
-  }
+  const size = isCleanup ? 'w-4 h-4' : 'w-5 h-5';
 
   switch (status) {
-    case 'success': return <CheckCircle className="w-6 h-6 text-green-500" />;
-    case 'error': return <XCircle className="w-6 h-6 text-red-500" />;
-    case 'running': return <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />;
-    case 'skipped': return <Circle className="w-6 h-6 text-gray-400" />;
-    default: return <Circle className="w-6 h-6 text-gray-600" />;
+    case 'success':
+      return <CheckCircle className={`${size} ${isCleanup ? 'text-orange-400' : 'text-green-500'}`} />;
+    case 'error':
+      return <XCircle className={`${size} text-red-500`} />;
+    case 'running':
+      return <Loader2 className={`${size} ${isCleanup ? 'text-orange-400' : 'text-blue-500'} animate-spin`} />;
+    case 'skipped':
+      return <MinusCircle className={`${size} text-gray-500`} />;
+    default:
+      return <Circle className={`${size} text-gray-600`} />;
   }
 }
 
 function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
   const isCleanup = step.isCleanup;
 
+  // Dynamic description based on message
+  let displayDescription = step.description;
+  if (step.message) {
+    displayDescription = step.message;
+  } else if (step.error) {
+    displayDescription = step.error;
+  }
+
   return (
-    <div className={`flex gap-3 ${isCleanup ? 'opacity-80' : ''}`}>
+    <div className={`flex gap-3 ${isCleanup ? 'opacity-90' : ''}`}>
       <div className="flex flex-col items-center">
         <StepIcon status={step.status} isCleanup={isCleanup} />
         {!isLast && (
-          <div className={`w-0.5 h-full min-h-[32px] mt-1 ${
-            step.status === 'success' ? (isCleanup ? 'bg-orange-500/50' : 'bg-green-500') : 
-            step.status === 'error' ? 'bg-red-500' : 'bg-gray-700'
+          <div className={`w-0.5 flex-1 min-h-[24px] mt-1 ${
+            step.status === 'success' ? (isCleanup ? 'bg-orange-500/50' : 'bg-green-500/50') : 
+            step.status === 'error' ? 'bg-red-500/50' : 'bg-gray-700'
           }`} />
         )}
       </div>
-      <div className={`flex-1 ${isCleanup ? 'pb-4' : 'pb-6'}`}>
+      <div className={`flex-1 ${isCleanup ? 'pb-3' : 'pb-5'}`}>
         <div className="flex items-center gap-2">
           <h3 className={`${isCleanup ? 'text-sm' : 'font-medium'} ${
-            step.status === 'running' ? (isCleanup ? 'text-orange-400' : 'text-blue-400') :
-            step.status === 'success' ? (isCleanup ? 'text-orange-400' : 'text-green-400') :
-            step.status === 'error' ? 'text-red-400' : 'text-gray-400'
+            step.status === 'running' ? (isCleanup ? 'text-orange-300' : 'text-blue-400') :
+            step.status === 'success' ? (isCleanup ? 'text-orange-300' : 'text-green-400') :
+            step.status === 'error' ? 'text-red-400' :
+            step.status === 'skipped' ? 'text-gray-500' : 'text-gray-400'
           }`}>
             {step.label}
           </h3>
@@ -133,8 +152,9 @@ function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
             <span className="text-xs text-gray-500">({(step.duration / 1000).toFixed(1)}s)</span>
           )}
         </div>
-        <p className={`text-sm text-gray-500 ${isCleanup ? 'text-xs' : ''}`}>{step.description}</p>
-        {step.error && <p className="text-sm text-red-400 mt-1">{step.error}</p>}
+        <p className={`text-sm ${step.status === 'error' ? 'text-red-400' : 'text-gray-500'} ${isCleanup ? 'text-xs' : ''}`}>
+          {displayDescription}
+        </p>
       </div>
     </div>
   );
@@ -166,7 +186,7 @@ function SetupContent() {
   const platformType = (searchParams.get('type') as PlatformType) || 'commercial_investor';
 
   const [currentStep, setCurrentStep] = useState<'form' | 'extracting' | 'review' | 'creating' | 'success' | 'error'>('form');
-  const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
+  const [steps, setSteps] = useState<Step[]>(getInitialSteps());
   const [result, setResult] = useState<OrchestrationResult | null>(null);
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const [formData, setFormData] = useState<FormData>({
@@ -191,74 +211,73 @@ function SetupContent() {
   };
 
   // ============================================================================
-  // STEP SIMULATION - Show progress as orchestration runs
+  // STEP PROGRESS SIMULATION (while waiting for orchestrator)
   // ============================================================================
 
-  const simulateSteps = async () => {
-    const stepOrder = [
-      'cleanup-supabase',
-      'cleanup-vercel',
-      'cleanup-github',
-      'create-supabase',
-      'wait-supabase',
-      'run-migrations',
-      'create-elevenlabs',
-      'create-github',
-      'create-vercel',
-      'configure-auth',
-      'trigger-deployment',
-      'send-welcome-email',
-    ];
+  const startProgressSimulation = () => {
+    let currentIdx = 0;
 
-    // Start cleanup steps
-    for (let i = 0; i < 3; i++) {
-      setSteps(prev => prev.map((s, idx) => ({
-        ...s,
-        status: idx === i ? 'running' : idx < i ? 'success' : s.status,
-      })));
-      await new Promise(r => setTimeout(r, 500));
-    }
+    const interval = setInterval(() => {
+      setSteps(prev => {
+        const newSteps = [...prev];
 
-    // Mark cleanup complete
-    setSteps(prev => prev.map((s, idx) => ({
-      ...s,
-      status: idx < 3 ? 'success' : idx === 3 ? 'running' : 'pending',
-    })));
+        // Mark current as running
+        if (currentIdx < newSteps.length) {
+          // Mark previous as success (simulation)
+          if (currentIdx > 0 && newSteps[currentIdx - 1].status === 'running') {
+            newSteps[currentIdx - 1].status = 'success';
+          }
+
+          // If still pending, mark as running
+          if (newSteps[currentIdx].status === 'pending') {
+            newSteps[currentIdx].status = 'running';
+          }
+
+          currentIdx++;
+        }
+
+        return newSteps;
+      });
+
+      // Stop after all steps
+      if (currentIdx >= STEP_ORDER.length) {
+        clearInterval(interval);
+      }
+    }, 800);
+
+    return () => clearInterval(interval);
   };
 
-  const updateStepsFromResult = (result: OrchestrationResult) => {
-    // Map orchestrator step names to our UI step names
-    const stepMapping: Record<string, string[]> = {
-      'pre-cleanup': ['cleanup-supabase', 'cleanup-vercel', 'cleanup-github'],
-      'create-supabase': ['create-supabase', 'wait-supabase'],
-      'run-migrations': ['run-migrations'],
-      'create-elevenlabs': ['create-elevenlabs'],
-      'create-github': ['create-github'],
-      'create-vercel': ['create-vercel'],
-      'configure-auth': ['configure-auth'],
-      'trigger-deployment': ['trigger-deployment'],
-      'send-welcome-email': ['send-welcome-email'],
-    };
+  // ============================================================================
+  // UPDATE STEPS FROM REAL RESULT
+  // ============================================================================
 
+  const updateStepsFromResult = (result: OrchestrationResult) => {
     setSteps(prev => {
       const newSteps = [...prev];
 
       for (const resultStep of result.steps) {
-        const uiStepIds = stepMapping[resultStep.step] || [resultStep.step];
-
-        for (const uiStepId of uiStepIds) {
-          const idx = newSteps.findIndex(s => s.id === uiStepId);
-          if (idx !== -1) {
-            newSteps[idx] = {
-              ...newSteps[idx],
-              status: resultStep.status === 'success' ? 'success' :
-                      resultStep.status === 'error' ? 'error' :
-                      resultStep.status === 'skipped' ? 'skipped' : 'pending',
-              error: resultStep.error,
-              duration: resultStep.duration ? resultStep.duration / uiStepIds.length : undefined,
-            };
-          }
+        const idx = newSteps.findIndex(s => s.id === resultStep.step);
+        if (idx !== -1) {
+          newSteps[idx] = {
+            ...newSteps[idx],
+            status: resultStep.status === 'success' ? 'success' :
+                    resultStep.status === 'error' ? 'error' :
+                    resultStep.status === 'skipped' ? 'skipped' : 'pending',
+            message: resultStep.message,
+            error: resultStep.error,
+            duration: resultStep.duration,
+          };
         }
+      }
+
+      // Mark any remaining pending steps as skipped if we had an error
+      if (!result.success) {
+        newSteps.forEach((step, idx) => {
+          if (step.status === 'pending' || step.status === 'running') {
+            newSteps[idx] = { ...step, status: 'skipped', message: 'Skipped due to error' };
+          }
+        });
       }
 
       return newSteps;
@@ -327,10 +346,10 @@ function SetupContent() {
 
   const handleCreate = async () => {
     setCurrentStep('creating');
-    setSteps(INITIAL_STEPS);
+    setSteps(getInitialSteps());
 
-    // Start step simulation
-    simulateSteps();
+    // Start simulation
+    const stopSimulation = startProgressSimulation();
 
     try {
       const response = await fetch('/api/setup/orchestrate', {
@@ -352,10 +371,12 @@ function SetupContent() {
       });
 
       const data: OrchestrationResult = await response.json();
+      stopSimulation();
       setResult(data);
       updateStepsFromResult(data);
       setCurrentStep(data.success ? 'success' : 'error');
     } catch (error: any) {
+      stopSimulation();
       setCurrentStep('error');
       setResult({
         success: false,
@@ -369,13 +390,13 @@ function SetupContent() {
 
   const handleRetry = () => {
     setCurrentStep('form');
-    setSteps(INITIAL_STEPS);
+    setSteps(getInitialSteps());
     setResult(null);
     setFormData(prev => ({ ...prev, branding: null }));
   };
 
   // ============================================================================
-  // RENDER: FORM (Initial)
+  // RENDER: FORM
   // ============================================================================
 
   if (currentStep === 'form') {
@@ -384,7 +405,7 @@ function SetupContent() {
         <div className="max-w-2xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold mb-2">RaiseReady Platform Setup</h1>
-            <p className="text-gray-400">Create a white-label pitch coaching platform in minutes</p>
+            <p className="text-gray-400">Create a white-label pitch coaching platform</p>
             <div className="mt-4 inline-block px-4 py-2 bg-purple-500/20 rounded-full text-purple-300 text-sm">
               {platformLabels[platformType]}
             </div>
@@ -396,33 +417,29 @@ function SetupContent() {
               <div className="flex gap-2">
                 <input
                   type="url"
-                  required
                   value={formData.companyWebsite}
                   onChange={e => setFormData(prev => ({ ...prev, companyWebsite: e.target.value }))}
-                  className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
                   placeholder="https://acme.vc"
                 />
                 <button
-                  type="button"
                   onClick={handleExtract}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-medium transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg font-medium"
                 >
                   <Sparkles className="w-4 h-4" />
                   Extract
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">We'll extract your branding, colors, and logo automatically</p>
               {extractionError && <p className="text-sm text-red-400 mt-2">{extractionError}</p>}
             </div>
 
             <div className="text-center text-gray-500">— or —</div>
 
             <button
-              type="button"
               onClick={handleSkipExtraction}
-              className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
+              className="w-full py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold"
             >
-              Skip Extraction & Configure Manually
+              Configure Manually
             </button>
           </div>
         </div>
@@ -440,10 +457,10 @@ function SetupContent() {
         <div className="max-w-2xl mx-auto text-center">
           <Globe className="w-16 h-16 text-purple-500 mx-auto mb-4 animate-pulse" />
           <h1 className="text-2xl font-bold mb-2">Extracting Branding</h1>
-          <p className="text-gray-400 mb-4">Analyzing {formData.companyWebsite}...</p>
-          <div className="flex items-center justify-center gap-2 text-purple-400">
+          <p className="text-gray-400">{formData.companyWebsite}</p>
+          <div className="flex items-center justify-center gap-2 mt-4 text-purple-400">
             <Loader2 className="w-5 h-5 animate-spin" />
-            <span>Extracting colors, logo, and company info</span>
+            <span>Analyzing website...</span>
           </div>
         </div>
       </div>
@@ -451,7 +468,7 @@ function SetupContent() {
   }
 
   // ============================================================================
-  // RENDER: REVIEW (After Extraction)
+  // RENDER: REVIEW
   // ============================================================================
 
   if (currentStep === 'review') {
@@ -462,35 +479,27 @@ function SetupContent() {
         <div className="max-w-2xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold mb-2">Review & Configure</h1>
-            <p className="text-gray-400">We extracted the following from your website</p>
+            <p className="text-gray-400">Confirm details before creating</p>
           </div>
 
           <form onSubmit={(e) => { e.preventDefault(); handleCreate(); }} className="space-y-6 bg-slate-900 rounded-xl p-8">
-            {/* Extracted Branding Preview */}
+            {/* Branding Preview */}
             <div className="bg-slate-800 rounded-lg p-4 space-y-3">
               <h3 className="font-medium text-purple-400 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> Extracted Branding
               </h3>
               {branding.logo.url && (
-                <div className="flex items-center gap-3">
-                  <img src={branding.logo.base64 || branding.logo.url} alt="Logo" className="h-10 w-auto" />
-                  <span className="text-sm text-gray-400">Logo detected</span>
-                </div>
+                <img src={branding.logo.base64 || branding.logo.url} alt="Logo" className="h-10 w-auto" />
               )}
               <div className="flex flex-wrap gap-4">
                 <ColorSwatch color={branding.colors.primary} label="Primary" />
                 <ColorSwatch color={branding.colors.accent} label="Accent" />
-                <ColorSwatch color={branding.colors.background} label="Background" />
-              </div>
-              <div className="text-sm text-gray-400">
-                Platform type: <span className="text-white">{platformLabels[branding.platformType]}</span>
               </div>
             </div>
 
-            {/* Company Info */}
+            {/* Company */}
             <div className="space-y-4">
-              <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Company Information</h2>
-
+              <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Company</h2>
               <div>
                 <label className="block text-sm font-medium mb-1">Company Name *</label>
                 <input
@@ -498,10 +507,9 @@ function SetupContent() {
                   required
                   value={formData.companyName}
                   onChange={e => setFormData(prev => ({ ...prev, companyName: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                 />
               </div>
-
               <div>
                 <label className="block text-sm font-medium mb-1">Company Email *</label>
                 <input
@@ -509,15 +517,14 @@ function SetupContent() {
                   required
                   value={formData.companyEmail}
                   onChange={e => setFormData(prev => ({ ...prev, companyEmail: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                 />
               </div>
             </div>
 
-            {/* Administrator */}
+            {/* Admin */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Administrator</h2>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1">First Name *</label>
@@ -526,7 +533,7 @@ function SetupContent() {
                     required
                     value={formData.adminFirstName}
                     onChange={e => setFormData(prev => ({ ...prev, adminFirstName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                   />
                 </div>
                 <div>
@@ -536,11 +543,10 @@ function SetupContent() {
                     required
                     value={formData.adminLastName}
                     onChange={e => setFormData(prev => ({ ...prev, adminLastName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                   />
                 </div>
               </div>
-
               <div>
                 <label className="block text-sm font-medium mb-1">Admin Email *</label>
                 <input
@@ -548,33 +554,22 @@ function SetupContent() {
                   required
                   value={formData.adminEmail}
                   onChange={e => setFormData(prev => ({ ...prev, adminEmail: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Phone</label>
-                <input
-                  type="tel"
-                  value={formData.adminPhone}
-                  onChange={e => setFormData(prev => ({ ...prev, adminPhone: e.target.value }))}
-                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                 />
               </div>
             </div>
 
-            {/* AI Coach */}
+            {/* Voice */}
             <div className="space-y-4">
               <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">AI Coach</h2>
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Coach Name</label>
+                  <label className="block text-sm font-medium mb-1">Name</label>
                   <input
                     type="text"
                     value={formData.agentName}
                     onChange={e => setFormData(prev => ({ ...prev, agentName: e.target.value }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                   />
                 </div>
                 <div>
@@ -582,7 +577,7 @@ function SetupContent() {
                   <select
                     value={formData.voiceGender}
                     onChange={e => setFormData(prev => ({ ...prev, voiceGender: e.target.value as 'female' | 'male' }))}
-                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500"
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg"
                   >
                     <option value="female">Female</option>
                     <option value="male">Male</option>
@@ -591,10 +586,7 @@ function SetupContent() {
               </div>
             </div>
 
-            <button
-              type="submit"
-              className="w-full py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition-colors"
-            >
+            <button type="submit" className="w-full py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold">
               Create Platform
             </button>
           </form>
@@ -621,30 +613,29 @@ function SetupContent() {
           </h1>
           <p className="text-gray-400">
             {currentStep === 'creating' && 'This may take 2-3 minutes...'}
-            {currentStep === 'success' && 'Your platform is ready to use'}
-            {currentStep === 'error' && (result?.rollback?.performed ? 'Resources have been cleaned up' : 'An error occurred during setup')}
+            {currentStep === 'success' && 'Your platform is ready'}
+            {currentStep === 'error' && 'An error occurred'}
           </p>
         </div>
 
         <div className="bg-slate-900 rounded-xl p-8">
-          {/* Cleanup Steps Section */}
-          <div className="mb-4">
+          {/* Cleanup Steps */}
+          <div className="mb-6">
             <h3 className="text-sm font-medium text-orange-400 mb-3 flex items-center gap-2">
               <Trash2 className="w-4 h-4" />
               Pre-flight Cleanup
             </h3>
-            <div className="pl-2 border-l-2 border-orange-500/30">
+            <div className="pl-2 border-l border-orange-500/30">
               {cleanupSteps.map((step, idx) => (
                 <StepItem key={step.id} step={step} isLast={idx === cleanupSteps.length - 1} />
               ))}
             </div>
           </div>
 
-          {/* Divider */}
-          <div className="border-t border-slate-700 my-6"></div>
+          <div className="border-t border-slate-700 my-6" />
 
-          {/* Creation Steps Section */}
-          <div className="mb-8">
+          {/* Creation Steps */}
+          <div className="mb-6">
             <h3 className="text-sm font-medium text-blue-400 mb-3 flex items-center gap-2">
               <Sparkles className="w-4 h-4" />
               Platform Creation
@@ -654,7 +645,7 @@ function SetupContent() {
             ))}
           </div>
 
-          {/* Success Panel */}
+          {/* Success */}
           {currentStep === 'success' && result && (
             <div className="border-t border-slate-700 pt-6 space-y-4">
               <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
@@ -672,7 +663,7 @@ function SetupContent() {
 
               {result.resources.github && (
                 <div className="bg-slate-800 rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-400 mb-1">GitHub Repository</h4>
+                  <h4 className="text-sm text-gray-400 mb-1">GitHub Repository</h4>
                   <a
                     href={result.resources.github.repoUrl}
                     target="_blank"
@@ -687,32 +678,29 @@ function SetupContent() {
 
               {result.duration && (
                 <p className="text-sm text-gray-500 text-center">
-                  Completed in {(result.duration / 1000).toFixed(1)} seconds
+                  Completed in {(result.duration / 1000).toFixed(1)}s
                 </p>
               )}
             </div>
           )}
 
-          {/* Error Panel */}
+          {/* Error */}
           {currentStep === 'error' && result && (
             <div className="border-t border-slate-700 pt-6 space-y-4">
               <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
                 <h3 className="text-red-400 font-semibold mb-2">Error</h3>
-                <p className="text-red-300">{result.error || 'An unexpected error occurred'}</p>
+                <p className="text-red-300">{result.error}</p>
               </div>
 
               {result.rollback?.performed && (
                 <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
-                  <h3 className="text-yellow-400 font-semibold mb-2">Cleanup Performed</h3>
-                  <p className="text-yellow-300 text-sm">
-                    Any partially created resources have been automatically deleted.
-                  </p>
+                  <p className="text-yellow-300 text-sm">Resources have been cleaned up.</p>
                 </div>
               )}
 
               <button
                 onClick={handleRetry}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold"
               >
                 <RotateCcw className="w-4 h-4" />
                 Try Again
@@ -726,7 +714,7 @@ function SetupContent() {
 }
 
 // ============================================================================
-// MAIN PAGE (Suspense wrapper)
+// MAIN PAGE
 // ============================================================================
 
 export default function SetupPage() {
