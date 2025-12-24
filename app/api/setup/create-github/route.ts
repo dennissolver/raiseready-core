@@ -4,6 +4,8 @@
 //
 // REFACTORED: No more hardcoded files. Pulls from template repo and only
 // customizes config/client.ts with branding.
+//
+// FIX: Added Step 1.5 to bootstrap empty repos before using Git Data API
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -153,6 +155,53 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
+    // STEP 1.5: Initialize empty repository with bootstrap commit
+    // ========================================================================
+    // GitHub's Git Data API (blobs, trees, commits) requires at least one commit.
+    // The "create or update file contents" API uniquely works on empty repos.
+
+    console.log(`[create-github] Checking if repository needs initialization...`);
+
+    // Small delay to ensure repo is ready after creation
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Check if repo is empty by trying to get the main branch
+    const checkBranchResponse = await fetch(
+      `${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`,
+      { headers }
+    );
+
+    if (!checkBranchResponse.ok) {
+      console.log(`[create-github] Repository is empty, creating bootstrap commit...`);
+
+      // Repo is empty - create initial commit using contents API (works on empty repos)
+      const bootstrapResponse = await fetch(
+        `${GITHUB_API}/repos/${owner}/${repoName}/contents/.gitkeep`,
+        {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: 'Initialize repository',
+            content: Buffer.from('# Generated platform\n').toString('base64'),
+          }),
+        }
+      );
+
+      if (!bootstrapResponse.ok) {
+        const err = await bootstrapResponse.json();
+        console.error(`[create-github] Bootstrap failed:`, err);
+        throw new Error(`Failed to initialize repository: ${err.message}`);
+      }
+
+      console.log(`[create-github] Repository initialized with bootstrap commit`);
+
+      // Small delay to ensure commit is processed
+      await new Promise(r => setTimeout(r, 500));
+    } else {
+      console.log(`[create-github] Repository already has commits, skipping bootstrap`);
+    }
+
+    // ========================================================================
     // STEP 2: Fetch template repository tree
     // ========================================================================
     console.log(`[create-github] Fetching template from ${TEMPLATE_OWNER}/${TEMPLATE_REPO}...`);
@@ -297,9 +346,20 @@ export async function POST(request: NextRequest) {
     const newTree = await createTreeResponse.json();
 
     // ========================================================================
-    // STEP 6: Create commit
+    // STEP 6: Create commit (with parent from bootstrap)
     // ========================================================================
     console.log(`[create-github] Creating commit...`);
+
+    // Get the current HEAD to use as parent
+    let parentSha: string | undefined;
+    const headResponse = await fetch(
+      `${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`,
+      { headers }
+    );
+    if (headResponse.ok) {
+      const headData = await headResponse.json();
+      parentSha = headData.object?.sha;
+    }
 
     const createCommitResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/commits`, {
       method: 'POST',
@@ -307,6 +367,7 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         message: `Initial setup: ${companyName || branding.company.name} platform\n\nGenerated from raiseready-child-template`,
         tree: newTree.sha,
+        parents: parentSha ? [parentSha] : [],
       }),
     });
 
@@ -318,30 +379,30 @@ export async function POST(request: NextRequest) {
     const newCommit = await createCommitResponse.json();
 
     // ========================================================================
-    // STEP 7: Create/update main branch reference
+    // STEP 7: Update main branch reference
     // ========================================================================
     console.log(`[create-github] Setting up main branch...`);
 
-    // Try to create the ref first
-    const createRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs`, {
-      method: 'POST',
+    // Since we bootstrapped, the ref should exist - try updating first
+    const updateRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`, {
+      method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ref: 'refs/heads/main',
-        sha: newCommit.sha,
-      }),
+      body: JSON.stringify({ sha: newCommit.sha, force: true }),
     });
 
-    if (!createRefResponse.ok) {
-      // Ref might already exist, try updating
-      const updateRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`, {
-        method: 'PATCH',
+    if (!updateRefResponse.ok) {
+      // Fallback: try creating the ref
+      const createRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs`, {
+        method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sha: newCommit.sha, force: true }),
+        body: JSON.stringify({
+          ref: 'refs/heads/main',
+          sha: newCommit.sha,
+        }),
       });
 
-      if (!updateRefResponse.ok) {
-        const err = await updateRefResponse.json();
+      if (!createRefResponse.ok) {
+        const err = await createRefResponse.json();
         throw new Error(`Failed to update ref: ${err.message}`);
       }
     }
