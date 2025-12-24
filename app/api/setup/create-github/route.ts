@@ -281,7 +281,7 @@ function getTemplateFiles(branding: ExtractedBranding, admin: any, platformMode:
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.460.0",
-    "next": "15.0.3",
+    "next": "15.1.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-dropzone": "^14.2.3",
