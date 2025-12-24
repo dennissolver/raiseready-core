@@ -327,12 +327,18 @@ export async function POST(request: NextRequest) {
     if (supabaseResult.status === 'error') {
       throw new Error(`Supabase failed: ${supabaseResult.error}`);
     }
+    // Handle both field name formats (projectId/projectRef, serviceKey/serviceRoleKey)
     resources.supabase = {
-      projectId: supabaseResult.data.projectRef,
+      projectId: supabaseResult.data.projectRef || supabaseResult.data.projectId,
       url: supabaseResult.data.url,
       anonKey: supabaseResult.data.anonKey,
-      serviceKey: supabaseResult.data.serviceRoleKey,
+      serviceKey: supabaseResult.data.serviceRoleKey || supabaseResult.data.serviceKey,
     };
+
+    // Validate we got the keys
+    if (!resources.supabase.serviceKey) {
+      throw new Error('Supabase created but failed to retrieve service key');
+    }
 
     // ========================================================================
     // STEP 2: Run Migrations
