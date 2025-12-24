@@ -281,7 +281,7 @@ function getTemplateFiles(branding: ExtractedBranding, admin: any, platformMode:
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.460.0",
-    "next": "15.1.9",
+    "next": "15.1.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-dropzone": "^14.2.3",
@@ -669,24 +669,46 @@ function FeatureCard({
 }`,
 
     // ========================================================================
-    // AUTH PAGES
+    // AUTH PAGES - WITH WORKING SUPABASE AUTH
     // ========================================================================
     'app/login/page.tsx': `'use client';
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { clientConfig } from '@/config/client';
+import { createClient } from '@/lib/supabase/client';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // TODO: Implement Supabase auth
-    setTimeout(() => setLoading(false), 1000);
+    setError('');
+
+    try {
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (signInError) {
+        setError(signInError.message);
+        setLoading(false);
+        return;
+      }
+
+      router.push('/founder/dashboard');
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
+      setLoading(false);
+    }
   };
 
   return (
@@ -702,6 +724,12 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold text-white">Welcome back</h1>
           <p className="text-slate-400 mt-2">Sign in to {clientConfig.company.name}</p>
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -737,7 +765,7 @@ export default function LoginPage() {
         </form>
 
         <p className="text-center text-slate-400 mt-6">
-          Don't have an account?{' '}
+          Don&apos;t have an account?{' '}
           <Link href="/signup/founder" className="text-purple-400 hover:underline">
             Sign up
           </Link>
@@ -752,19 +780,57 @@ export default function LoginPage() {
 import { useState } from 'react';
 import Link from 'next/link';
 import { clientConfig } from '@/config/client';
+import { createClient } from '@/lib/supabase/client';
 
 export default function FounderSignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // TODO: Implement Supabase auth
-    setTimeout(() => setLoading(false), 1000);
+    setError('');
+
+    try {
+      const supabase = createClient();
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: name, role: 'founder' },
+          emailRedirectTo: \`\${window.location.origin}/founder/dashboard\`,
+        },
+      });
+
+      if (signUpError) {
+        setError(signUpError.message);
+        setLoading(false);
+        return;
+      }
+      setSuccess(true);
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (success) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+        <div className="w-full max-w-md text-center">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl mx-auto mb-6" style={{ backgroundColor: clientConfig.theme.colors.accent }}>✓</div>
+          <h1 className="text-2xl font-bold text-white mb-4">Check your email</h1>
+          <p className="text-slate-400 mb-6">We sent a confirmation link to <strong className="text-white">{email}</strong>. Click the link to activate your account.</p>
+          <p className="text-slate-500 text-sm">Didn&apos;t receive it? Check spam or <button onClick={() => setSuccess(false)} className="text-purple-400 hover:underline">try again</button></p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
@@ -779,6 +845,12 @@ export default function FounderSignupPage() {
           <h1 className="text-2xl font-bold text-white">Create your account</h1>
           <p className="text-slate-400 mt-2">Start your pitch coaching journey</p>
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -810,7 +882,8 @@ export default function FounderSignupPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-purple-500 focus:outline-none"
-              placeholder="Create a password"
+              placeholder="Min 6 characters"
+              minLength={6}
               required
             />
           </div>
@@ -837,6 +910,7 @@ export default function FounderSignupPage() {
 
     // ========================================================================
     // FOUNDER DASHBOARD
+    // ========================================================================
     // ========================================================================
     'app/founder/dashboard/page.tsx': `import { clientConfig } from '@/config/client';
 import { Upload, MessageSquare, Mic, FileEdit, CheckCircle } from 'lucide-react';
