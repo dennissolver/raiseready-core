@@ -1,22 +1,20 @@
 // app/api/setup/orchestrate/route.ts
 // ============================================================================
-// PLATFORM CREATION ORCHESTRATOR
-//
-// Calls "dumb tools" in sequence. Each tool does ONE thing.
-// On failure, automatically cleans up any resources that were created.
+// PLATFORM CREATION ORCHESTRATOR v4
 //
 // SEQUENCE:
 // ┌──────────────────────────────────────────────────────────────────────────┐
-// │  1. create-supabase     → Creates DB, returns url + keys                 │
-// │  2. create-elevenlabs   → Creates voice agent, returns agentId           │
-// │  3. create-github       → Creates repo, pushes ALL files                 │
-// │  4. create-vercel       → Creates project, links GitHub, sets env vars   │
-// │  5. configure-auth      → Sets Supabase redirect URLs                    │
-// │  6. trigger-deployment  → Pushes commit to GitHub → Vercel auto-deploys  │
-// │  7. send-welcome-email  → Notifies admin                                 │
+// │  1. create-supabase     → Creates DB project                             │
+// │  2. run-migrations      → Applies schema + RLS + storage (NEW!)          │
+// │  3. create-elevenlabs   → Creates voice agent                            │
+// │  4. create-github       → Creates repo, pushes files                     │
+// │  5. create-vercel       → Creates project, links GitHub, sets env vars   │
+// │  6. configure-auth      → Sets Supabase redirect URLs                    │
+// │  7. trigger-deployment  → Pushes commit → Vercel auto-deploys            │
+// │  8. send-welcome-email  → Notifies admin                                 │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
-// ON FAILURE: Automatically calls cleanup to delete any created resources.
+// ON FAILURE: Automatically cleans up created resources.
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -40,8 +38,7 @@ interface OrchestrationRequest {
   branding?: ExtractedBranding;
   skipExtraction?: boolean;
   platformMode?: 'screening' | 'coaching';
-  // Cleanup options
-  rollbackOnFailure?: boolean; // Default: true
+  rollbackOnFailure?: boolean;
 }
 
 interface ExtractedBranding {
@@ -154,7 +151,7 @@ function getDefaultBranding(body: OrchestrationRequest): ExtractedBranding {
 }
 
 // ============================================================================
-// ROLLBACK / CLEANUP
+// ROLLBACK
 // ============================================================================
 
 async function rollbackResources(
@@ -163,7 +160,6 @@ async function rollbackResources(
   projectSlug: string
 ): Promise<any> {
   console.log(`\n[Orchestrator] !!! ROLLBACK INITIATED !!!`);
-  console.log(`[Orchestrator] Cleaning up created resources...\n`);
 
   const result = await callTool(baseUrl, 'cleanup', {
     projectSlug,
@@ -175,7 +171,7 @@ async function rollbackResources(
     },
   });
 
-  console.log(`[Orchestrator] Rollback complete:`, result);
+  console.log(`[Orchestrator] Rollback complete`);
   return result;
 }
 
@@ -199,9 +195,8 @@ export async function POST(request: NextRequest) {
   try {
     const body: OrchestrationRequest = await request.json();
     const baseUrl = getBaseUrl(request);
-    const rollbackOnFailure = body.rollbackOnFailure !== false; // Default true
+    const rollbackOnFailure = body.rollbackOnFailure !== false;
 
-    // Validate
     if (!body.companyName || !body.companyEmail || !body.adminEmail) {
       return NextResponse.json(
         { error: 'companyName, companyEmail, and adminEmail required' },
@@ -212,7 +207,6 @@ export async function POST(request: NextRequest) {
     projectSlug = generateSlug(body.companyName);
     console.log(`\n${'='.repeat(70)}`);
     console.log(`[Orchestrator] Creating platform: ${projectSlug}`);
-    console.log(`[Orchestrator] Rollback on failure: ${rollbackOnFailure}`);
     console.log(`${'='.repeat(70)}\n`);
 
     const branding = body.branding || getDefaultBranding(body);
@@ -238,7 +232,25 @@ export async function POST(request: NextRequest) {
     };
 
     // ========================================================================
-    // STEP 2: Create ElevenLabs (optional)
+    // STEP 2: Run Migrations (NEW!)
+    // ========================================================================
+    const migrationsResult = await executeStep('run-migrations', async () => {
+      const result = await callTool(baseUrl, 'run-migrations', {
+        supabaseUrl: resources.supabase!.url,
+        supabaseServiceKey: resources.supabase!.serviceKey,
+        schemaType: 'client',
+      });
+      if (!result.success) throw new Error(result.error);
+      return result.data;
+    });
+    steps.push(migrationsResult);
+
+    if (migrationsResult.status === 'error') {
+      throw new Error(`Migrations failed: ${migrationsResult.error}`);
+    }
+
+    // ========================================================================
+    // STEP 3: Create ElevenLabs (optional)
     // ========================================================================
     const elevenlabsResult = await executeStep('create-elevenlabs', async () => {
       const result = await callTool(baseUrl, 'create-elevenlabs', {
@@ -259,7 +271,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
-    // STEP 3: Create GitHub
+    // STEP 4: Create GitHub
     // ========================================================================
     const githubResult = await executeStep('create-github', async () => {
       const result = await callTool(baseUrl, 'create-github', {
@@ -287,7 +299,7 @@ export async function POST(request: NextRequest) {
     };
 
     // ========================================================================
-    // STEP 4: Create Vercel
+    // STEP 5: Create Vercel
     // ========================================================================
     const vercelResult = await executeStep('create-vercel', async () => {
       const result = await callTool(baseUrl, 'create-vercel', {
@@ -315,7 +327,7 @@ export async function POST(request: NextRequest) {
     };
 
     // ========================================================================
-    // STEP 5: Configure Supabase Auth
+    // STEP 6: Configure Supabase Auth
     // ========================================================================
     const authResult = await executeStep('configure-auth', async () => {
       const result = await callTool(baseUrl, 'configure-supabase-auth', {
@@ -332,7 +344,7 @@ export async function POST(request: NextRequest) {
     steps.push(authResult);
 
     // ========================================================================
-    // STEP 6: Trigger Deployment
+    // STEP 7: Trigger Deployment
     // ========================================================================
     const deployResult = await executeStep('trigger-deployment', async () => {
       const result = await callTool(baseUrl, 'trigger-deployment', {
@@ -344,13 +356,8 @@ export async function POST(request: NextRequest) {
     });
     steps.push(deployResult);
 
-    if (deployResult.status === 'error') {
-      // Don't fail entire flow - Vercel might auto-deploy anyway
-      console.warn('[Orchestrator] Deployment trigger failed, Vercel may still auto-deploy');
-    }
-
     // ========================================================================
-    // STEP 7: Send Welcome Email
+    // STEP 8: Send Welcome Email
     // ========================================================================
     const emailResult = await executeStep('send-welcome-email', async () => {
       const result = await callTool(baseUrl, 'send-welcome-email', {
@@ -369,9 +376,9 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     const totalDuration = Date.now() - startTime;
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] SUCCESS! Platform created.`);
+    console.log(`[Orchestrator] SUCCESS!`);
     console.log(`[Orchestrator] URL: ${resources.vercel?.url}`);
-    console.log(`[Orchestrator] Duration: ${totalDuration}ms`);
+    console.log(`[Orchestrator] Duration: ${(totalDuration / 1000).toFixed(1)}s`);
     console.log(`${'='.repeat(70)}\n`);
 
     return NextResponse.json({
@@ -384,9 +391,8 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     const totalDuration = Date.now() - startTime;
-    console.error(`\n[Orchestrator] FATAL ERROR: ${error.message}`);
+    console.error(`\n[Orchestrator] FATAL: ${error.message}`);
 
-    // Attempt rollback if enabled
     const body = await request.clone().json().catch(() => ({}));
     const rollbackOnFailure = body.rollbackOnFailure !== false;
 
@@ -395,7 +401,7 @@ export async function POST(request: NextRequest) {
         const baseUrl = getBaseUrl(request);
         rollbackResult = await rollbackResources(baseUrl, resources, projectSlug);
       } catch (rollbackError: any) {
-        console.error(`[Orchestrator] Rollback also failed: ${rollbackError.message}`);
+        console.error(`[Orchestrator] Rollback failed: ${rollbackError.message}`);
         rollbackResult = { performed: true, error: rollbackError.message };
       }
     }
@@ -422,19 +428,18 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     service: 'orchestrate',
-    description: 'Coordinates platform creation with automatic rollback on failure',
+    version: 'v4',
+    description: 'Creates complete child platform with database, auth, and deployment',
     sequence: [
-      '1. create-supabase',
-      '2. create-elevenlabs (optional)',
-      '3. create-github',
-      '4. create-vercel',
-      '5. configure-auth',
-      '6. trigger-deployment',
-      '7. send-welcome-email',
+      '1. create-supabase    → Creates database project',
+      '2. run-migrations     → Applies schema + RLS + storage',
+      '3. create-elevenlabs  → Creates voice agent (optional)',
+      '4. create-github      → Creates repo with all platform files',
+      '5. create-vercel      → Links to GitHub, sets env vars',
+      '6. configure-auth     → Sets Supabase redirect URLs',
+      '7. trigger-deployment → Pushes commit to trigger Vercel build',
+      '8. send-welcome-email → Notifies admin',
     ],
-    onFailure: 'Automatically calls /api/setup/cleanup to delete created resources',
-    method: 'POST',
-    requiredParams: ['companyName', 'companyEmail', 'adminEmail', 'adminFirstName', 'adminLastName'],
-    optionalParams: ['companyWebsite', 'adminPhone', 'agentName', 'voiceGender', 'branding', 'platformMode', 'rollbackOnFailure'],
+    onFailure: 'Auto-rollback deletes all created resources',
   });
 }
