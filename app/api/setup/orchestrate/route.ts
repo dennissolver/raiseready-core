@@ -1,17 +1,20 @@
 // app/api/setup/orchestrate/route.ts
 // ============================================================================
-// PLATFORM CREATION ORCHESTRATOR v4
+// PLATFORM CREATION ORCHESTRATOR v6
+//
+// PATTERN: Smart orchestrator calling DUMB tools
 //
 // SEQUENCE:
 // ┌──────────────────────────────────────────────────────────────────────────┐
-// │  1. create-supabase     → Creates DB project                             │
-// │  2. run-migrations      → Applies schema + RLS + storage (NEW!)          │
-// │  3. create-elevenlabs   → Creates voice agent                            │
-// │  4. create-github       → Creates repo, pushes files                     │
-// │  5. create-vercel       → Creates project, links GitHub, sets env vars   │
-// │  6. configure-auth      → Sets Supabase redirect URLs                    │
-// │  7. trigger-deployment  → Pushes commit → Vercel auto-deploys            │
-// │  8. send-welcome-email  → Notifies admin                                 │
+// │  0. pre-cleanup        → Look up & delete existing resources             │
+// │  1. create-supabase    → Creates DB project                              │
+// │  2. run-migrations     → Applies schema + RLS + storage                  │
+// │  3. create-elevenlabs  → Creates voice agent                             │
+// │  4. create-github      → Creates repo from template                      │
+// │  5. create-vercel      → Creates project, links GitHub, sets env vars    │
+// │  6. configure-auth     → Sets Supabase redirect URLs                     │
+// │  7. trigger-deployment → Pushes commit → Vercel auto-deploys             │
+// │  8. send-welcome-email → Notifies admin                                  │
 // └──────────────────────────────────────────────────────────────────────────┘
 //
 // ON FAILURE: Automatically cleans up created resources.
@@ -36,9 +39,9 @@ interface OrchestrationRequest {
   agentName?: string;
   voiceGender?: 'female' | 'male';
   branding?: ExtractedBranding;
-  skipExtraction?: boolean;
   platformMode?: 'screening' | 'coaching';
   rollbackOnFailure?: boolean;
+  skipPreCleanup?: boolean;
 }
 
 interface ExtractedBranding {
@@ -63,16 +66,6 @@ interface Resources {
   github: { repoUrl: string; repoName: string } | null;
   vercel: { projectId: string; url: string } | null;
   elevenlabs: { agentId: string } | null;
-}
-
-interface OrchestrationResult {
-  success: boolean;
-  platformUrl: string | null;
-  steps: StepResult[];
-  resources: Resources;
-  rollback?: { performed: boolean; results?: any };
-  error?: string;
-  duration?: number;
 }
 
 // ============================================================================
@@ -151,7 +144,94 @@ function getDefaultBranding(body: OrchestrationRequest): ExtractedBranding {
 }
 
 // ============================================================================
-// ROLLBACK
+// PRE-CLEANUP - Smart lookup, then call dumb delete tools
+// ============================================================================
+
+async function preCleanup(baseUrl: string, projectSlug: string): Promise<StepResult> {
+  const startTime = Date.now();
+  console.log(`[Orchestrator] >>> Pre-cleanup for slug: ${projectSlug}`);
+
+  const results: any = { supabase: null, vercel: null, github: null };
+
+  try {
+    const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+
+    // ========================================================================
+    // 1. SUPABASE: Look up project by name, then call delete-supabase
+    // ========================================================================
+    if (supabaseToken) {
+      console.log(`[Orchestrator] Looking up Supabase project by name: ${projectSlug}`);
+
+      const listRes = await fetch('https://api.supabase.com/v1/projects', {
+        headers: {
+          Authorization: `Bearer ${supabaseToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (listRes.ok) {
+        const projects = await listRes.json();
+        const existing = projects.find((p: any) => p.name === projectSlug);
+
+        if (existing) {
+          console.log(`[Orchestrator] Found Supabase project: ${existing.id}, deleting...`);
+          const deleteRes = await callTool(baseUrl, 'delete-supabase', { projectRef: existing.id });
+          results.supabase = deleteRes;
+
+          if (deleteRes.success) {
+            console.log(`[Orchestrator] Deleted Supabase project: ${existing.id}`);
+            // Wait for deletion to propagate
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        } else {
+          console.log(`[Orchestrator] No existing Supabase project found`);
+          results.supabase = { success: true, notFound: true };
+        }
+      }
+    }
+
+    // ========================================================================
+    // 2. VERCEL: Call delete-vercel with projectName
+    // ========================================================================
+    console.log(`[Orchestrator] Deleting Vercel project: ${projectSlug}`);
+    const vercelRes = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
+    results.vercel = vercelRes;
+    if (vercelRes.success) console.log(`[Orchestrator] Deleted Vercel project`);
+
+    // ========================================================================
+    // 3. GITHUB: Call delete-github with repoName
+    // ========================================================================
+    console.log(`[Orchestrator] Deleting GitHub repo: ${projectSlug}`);
+    const githubRes = await callTool(baseUrl, 'delete-github', { repoName: projectSlug });
+    results.github = githubRes;
+    if (githubRes.success) console.log(`[Orchestrator] Deleted GitHub repo`);
+
+    // ========================================================================
+    // Note: ElevenLabs agents have unique names per creation, no cleanup needed
+    // ========================================================================
+
+    const duration = Date.now() - startTime;
+    console.log(`[Orchestrator] <<< Pre-cleanup complete (${duration}ms)`);
+
+    return {
+      step: 'pre-cleanup',
+      status: 'success',
+      data: results,
+      duration,
+    };
+  } catch (error: any) {
+    console.error(`[Orchestrator] Pre-cleanup error (non-fatal):`, error.message);
+    return {
+      step: 'pre-cleanup',
+      status: 'success', // Non-fatal, continue anyway
+      data: { error: error.message, results },
+      duration: Date.now() - startTime,
+    };
+  }
+}
+
+// ============================================================================
+// ROLLBACK - Call dumb delete tools
 // ============================================================================
 
 async function rollbackResources(
@@ -161,18 +241,27 @@ async function rollbackResources(
 ): Promise<any> {
   console.log(`\n[Orchestrator] !!! ROLLBACK INITIATED !!!`);
 
-  const result = await callTool(baseUrl, 'cleanup', {
-    projectSlug,
-    resources: {
-      vercel: resources.vercel ? { projectId: resources.vercel.projectId } : undefined,
-      github: resources.github ? { repoName: resources.github.repoName } : undefined,
-      supabase: resources.supabase ? { projectRef: resources.supabase.projectId } : undefined,
-      elevenlabs: resources.elevenlabs ? { agentId: resources.elevenlabs.agentId } : undefined,
-    },
-  });
+  const results: any = {};
+
+  // Delete in reverse order of creation
+  if (resources.vercel) {
+    results.vercel = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
+  }
+
+  if (resources.github) {
+    results.github = await callTool(baseUrl, 'delete-github', { repoName: resources.github.repoName });
+  }
+
+  if (resources.elevenlabs) {
+    results.elevenlabs = await callTool(baseUrl, 'delete-elevenlabs', { agentId: resources.elevenlabs.agentId });
+  }
+
+  if (resources.supabase) {
+    results.supabase = await callTool(baseUrl, 'delete-supabase', { projectRef: resources.supabase.projectId });
+  }
 
   console.log(`[Orchestrator] Rollback complete`);
-  return result;
+  return results;
 }
 
 // ============================================================================
@@ -191,11 +280,13 @@ export async function POST(request: NextRequest) {
 
   let rollbackResult: any = null;
   let projectSlug = '';
+  let body: OrchestrationRequest;
 
   try {
-    const body: OrchestrationRequest = await request.json();
+    body = await request.json();
     const baseUrl = getBaseUrl(request);
     const rollbackOnFailure = body.rollbackOnFailure !== false;
+    const skipPreCleanup = body.skipPreCleanup === true;
 
     if (!body.companyName || !body.companyEmail || !body.adminEmail) {
       return NextResponse.json(
@@ -206,16 +297,28 @@ export async function POST(request: NextRequest) {
 
     projectSlug = generateSlug(body.companyName);
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] Creating platform: ${projectSlug}`);
+    console.log(`[Orchestrator] Starting platform creation for: ${body.companyName}`);
+    console.log(`[Orchestrator] Slug: ${projectSlug}`);
     console.log(`${'='.repeat(70)}\n`);
 
     const branding = body.branding || getDefaultBranding(body);
 
     // ========================================================================
+    // STEP 0: Pre-cleanup (delete existing resources)
+    // ========================================================================
+    if (!skipPreCleanup) {
+      const cleanupResult = await preCleanup(baseUrl, projectSlug);
+      steps.push(cleanupResult);
+    }
+
+    // ========================================================================
     // STEP 1: Create Supabase
     // ========================================================================
     const supabaseResult = await executeStep('create-supabase', async () => {
-      const result = await callTool(baseUrl, 'create-supabase', { projectName: projectSlug });
+      const result = await callTool(baseUrl, 'create-supabase', {
+        projectName: projectSlug,
+        organizationId: process.env.SUPABASE_ORG_ID,
+      });
       if (!result.success) throw new Error(result.error);
       return result.data;
     });
@@ -225,20 +328,19 @@ export async function POST(request: NextRequest) {
       throw new Error(`Supabase failed: ${supabaseResult.error}`);
     }
     resources.supabase = {
-      projectId: supabaseResult.data.projectId,
+      projectId: supabaseResult.data.projectRef,
       url: supabaseResult.data.url,
       anonKey: supabaseResult.data.anonKey,
-      serviceKey: supabaseResult.data.serviceKey,
+      serviceKey: supabaseResult.data.serviceRoleKey,
     };
 
     // ========================================================================
-    // STEP 2: Run Migrations (NEW!)
+    // STEP 2: Run Migrations
     // ========================================================================
     const migrationsResult = await executeStep('run-migrations', async () => {
       const result = await callTool(baseUrl, 'run-migrations', {
         supabaseUrl: resources.supabase!.url,
         supabaseServiceKey: resources.supabase!.serviceKey,
-        schemaType: 'client',
       });
       if (!result.success) throw new Error(result.error);
       return result.data;
@@ -250,7 +352,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
-    // STEP 3: Create ElevenLabs (optional)
+    // STEP 3: Create ElevenLabs (optional, non-fatal)
     // ========================================================================
     const elevenlabsResult = await executeStep('create-elevenlabs', async () => {
       const result = await callTool(baseUrl, 'create-elevenlabs', {
@@ -277,6 +379,7 @@ export async function POST(request: NextRequest) {
       const result = await callTool(baseUrl, 'create-github', {
         repoName: projectSlug,
         branding,
+        companyName: body.companyName,
         admin: {
           firstName: body.adminFirstName,
           lastName: body.adminLastName,
@@ -310,6 +413,8 @@ export async function POST(request: NextRequest) {
           NEXT_PUBLIC_SUPABASE_ANON_KEY: resources.supabase!.anonKey,
           SUPABASE_SERVICE_ROLE_KEY: resources.supabase!.serviceKey,
           ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
+          ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
           NEXT_PUBLIC_COMPANY_NAME: body.companyName,
         },
       });
@@ -356,6 +461,10 @@ export async function POST(request: NextRequest) {
     });
     steps.push(deployResult);
 
+    if (deployResult.status === 'error') {
+      console.warn('[Orchestrator] Trigger deployment failed, Vercel may still auto-deploy');
+    }
+
     // ========================================================================
     // STEP 8: Send Welcome Email
     // ========================================================================
@@ -387,14 +496,13 @@ export async function POST(request: NextRequest) {
       steps,
       resources,
       duration: totalDuration,
-    } as OrchestrationResult);
+    });
 
   } catch (error: any) {
     const totalDuration = Date.now() - startTime;
     console.error(`\n[Orchestrator] FATAL: ${error.message}`);
 
-    const body = await request.clone().json().catch(() => ({}));
-    const rollbackOnFailure = body.rollbackOnFailure !== false;
+    const rollbackOnFailure = body!?.rollbackOnFailure !== false;
 
     if (rollbackOnFailure && projectSlug) {
       try {
@@ -415,7 +523,7 @@ export async function POST(request: NextRequest) {
         rollback: rollbackResult ? { performed: true, results: rollbackResult } : { performed: false },
         error: error.message,
         duration: totalDuration,
-      } as OrchestrationResult,
+      },
       { status: 500 }
     );
   }
@@ -428,9 +536,10 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     service: 'orchestrate',
-    version: 'v4',
-    description: 'Creates complete child platform with database, auth, and deployment',
+    version: 'v6',
+    pattern: 'Smart orchestrator calling DUMB tools',
     sequence: [
+      '0. pre-cleanup        → Look up by name, call delete tools',
       '1. create-supabase    → Creates database project',
       '2. run-migrations     → Applies schema + RLS + storage',
       '3. create-elevenlabs  → Creates voice agent (optional)',
@@ -440,6 +549,6 @@ export async function GET() {
       '7. trigger-deployment → Pushes commit to trigger Vercel build',
       '8. send-welcome-email → Notifies admin',
     ],
-    onFailure: 'Auto-rollback deletes all created resources',
+    onFailure: 'Auto-rollback calls delete tools for created resources',
   });
 }
