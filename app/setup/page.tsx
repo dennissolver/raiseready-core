@@ -1,1224 +1,491 @@
 'use client';
 
-import { useState } from 'react';
-import {
-  Building2, User, Mic, CheckCircle, ArrowRight, ArrowLeft,
-  Rocket, Loader2, Globe, Database, Phone, Mail, ExternalLink,
-  Palette, Search, AlertCircle, Sparkles
-} from 'lucide-react';
-import type { ExtractedBranding, PlatformType } from '@/types/branding';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw } from 'lucide-react';
 
-// =============================================================================
+// ============================================================================
 // TYPES
-// =============================================================================
+// ============================================================================
 
-type Step = 'website' | 'company' | 'admin' | 'voice' | 'review' | 'creating';
+type PlatformType = 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
 
-type ExtractionStatus = 'idle' | 'extracting' | 'complete' | 'error';
+type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
+
+interface Step {
+  id: string;
+  label: string;
+  description: string;
+  status: StepStatus;
+  error?: string;
+  duration?: number;
+}
 
 interface FormData {
-  // Website extraction
-  websiteUrl: string;
-  // Company (populated from extraction or manual)
   companyName: string;
   companyWebsite: string;
   companyEmail: string;
-  companyTagline: string;
-  companyDescription: string;
-  // Branding
-  primaryColor: string;
-  accentColor: string;
-  backgroundColor: string;
-  logoUrl: string | null;
-  logoBase64: string | null;
-  // Platform type
-  platformType: PlatformType;
-  // Thesis
-  focusAreas: string[];
-  sectors: string[];
-  philosophy: string;
-  // Admin
   adminFirstName: string;
   adminLastName: string;
   adminEmail: string;
   adminPhone: string;
-  // Voice
   agentName: string;
   voiceGender: 'female' | 'male';
+  platformType: PlatformType;
 }
 
-interface CreationStatus {
-  supabase: 'pending' | 'creating' | 'done' | 'error';
-  elevenlabs: 'pending' | 'creating' | 'done' | 'error';
-  github: 'pending' | 'creating' | 'done' | 'error';
-  vercel: 'pending' | 'creating' | 'done' | 'error';
-  deployment: 'pending' | 'creating' | 'done' | 'error';
+interface OrchestrationResult {
+  success: boolean;
+  platformUrl: string | null;
+  steps: Array<{
+    step: string;
+    status: string;
+    error?: string;
+    duration?: number;
+    data?: any;
+  }>;
+  resources: {
+    supabase: { projectId: string; url: string } | null;
+    github: { repoUrl: string; repoName: string } | null;
+    vercel: { projectId: string; url: string } | null;
+    elevenlabs: { agentId: string } | null;
+  };
+  rollback?: { performed: boolean; results?: any };
+  error?: string;
+  duration?: number;
 }
 
-interface CreatedResources {
-  supabaseUrl: string;
-  supabaseProjectId: string;
-  supabaseAnonKey: string;
-  supabaseServiceKey: string;
-  elevenlabsAgentId: string;
-  githubRepoUrl: string;
-  vercelUrl: string;
-  vercelProjectId: string;
+// ============================================================================
+// STEP DEFINITIONS
+// ============================================================================
+
+const INITIAL_STEPS: Step[] = [
+  { id: 'create-supabase', label: 'Creating Supabase project', description: 'Setting up database and authentication', status: 'pending' },
+  { id: 'run-migrations', label: 'Applying database schema', description: 'Creating tables, policies, and storage', status: 'pending' },
+  { id: 'create-elevenlabs', label: 'Creating voice agent', description: 'Setting up AI voice coaching', status: 'pending' },
+  { id: 'create-github', label: 'Setting up repository', description: 'Creating codebase from template', status: 'pending' },
+  { id: 'create-vercel', label: 'Creating deployment', description: 'Configuring hosting and environment', status: 'pending' },
+  { id: 'configure-auth', label: 'Configuring authentication', description: 'Setting up login redirects', status: 'pending' },
+  { id: 'trigger-deployment', label: 'Deploying platform', description: 'Building and launching your site', status: 'pending' },
+  { id: 'send-welcome-email', label: 'Sending welcome email', description: 'Notifying administrator', status: 'pending' },
+];
+
+// ============================================================================
+// COMPONENTS
+// ============================================================================
+
+function StepIcon({ status }: { status: StepStatus }) {
+  switch (status) {
+    case 'success':
+      return <CheckCircle className="w-6 h-6 text-green-500" />;
+    case 'error':
+      return <XCircle className="w-6 h-6 text-red-500" />;
+    case 'running':
+      return <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />;
+    case 'skipped':
+      return <Circle className="w-6 h-6 text-gray-400" />;
+    default:
+      return <Circle className="w-6 h-6 text-gray-600" />;
+  }
 }
 
-// =============================================================================
-// DEFAULT VALUES
-// =============================================================================
+function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
+  return (
+    <div className="flex gap-4">
+      <div className="flex flex-col items-center">
+        <StepIcon status={step.status} />
+        {!isLast && (
+          <div className={`w-0.5 h-full min-h-[40px] mt-2 ${
+            step.status === 'success' ? 'bg-green-500' : 
+            step.status === 'error' ? 'bg-red-500' : 'bg-gray-700'
+          }`} />
+        )}
+      </div>
+      <div className="flex-1 pb-8">
+        <div className="flex items-center gap-2">
+          <h3 className={`font-medium ${
+            step.status === 'running' ? 'text-blue-400' :
+            step.status === 'success' ? 'text-green-400' :
+            step.status === 'error' ? 'text-red-400' : 'text-gray-400'
+          }`}>
+            {step.label}
+          </h3>
+          {step.duration && (
+            <span className="text-xs text-gray-500">({(step.duration / 1000).toFixed(1)}s)</span>
+          )}
+        </div>
+        <p className="text-sm text-gray-500">{step.description}</p>
+        {step.error && (
+          <p className="text-sm text-red-400 mt-1">{step.error}</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
-const DEFAULT_COLORS = {
-  primary: '#8B5CF6',
-  accent: '#10B981',
-  background: '#0F172A',
-};
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
-const PLATFORM_TYPE_LABELS: Record<PlatformType, string> = {
-  impact_investor: 'Impact Investor',
-  commercial_investor: 'Commercial VC/PE',
-  family_office: 'Family Office',
-  founder_service_provider: 'Service Provider / Accelerator',
-};
+export default function SetupPage() {
+  const searchParams = useSearchParams();
+  const platformType = (searchParams.get('type') as PlatformType) || 'commercial_investor';
 
-// =============================================================================
-// COMPONENT
-// =============================================================================
-
-export default function SetupWizard() {
-  const [step, setStep] = useState<Step>('website');
-  const [error, setError] = useState('');
-
-  // Extraction state
-  const [extractionStatus, setExtractionStatus] = useState<ExtractionStatus>('idle');
-  const [extractionMessage, setExtractionMessage] = useState('');
-
+  const [currentStep, setCurrentStep] = useState<'form' | 'creating' | 'success' | 'error'>('form');
+  const [steps, setSteps] = useState<Step[]>(INITIAL_STEPS);
+  const [result, setResult] = useState<OrchestrationResult | null>(null);
   const [formData, setFormData] = useState<FormData>({
-    websiteUrl: '',
     companyName: '',
     companyWebsite: '',
     companyEmail: '',
-    companyTagline: '',
-    companyDescription: '',
-    primaryColor: DEFAULT_COLORS.primary,
-    accentColor: DEFAULT_COLORS.accent,
-    backgroundColor: DEFAULT_COLORS.background,
-    logoUrl: null,
-    logoBase64: null,
-    platformType: 'commercial_investor',
-    focusAreas: [],
-    sectors: [],
-    philosophy: '',
     adminFirstName: '',
     adminLastName: '',
     adminEmail: '',
     adminPhone: '',
     agentName: 'Maya',
     voiceGender: 'female',
+    platformType,
   });
 
-  const [creationStatus, setCreationStatus] = useState<CreationStatus>({
-    supabase: 'pending',
-    elevenlabs: 'pending',
-    github: 'pending',
-    vercel: 'pending',
-    deployment: 'pending',
-  });
-
-  const [createdResources, setCreatedResources] = useState<CreatedResources>({
-    supabaseUrl: '',
-    supabaseProjectId: '',
-    supabaseAnonKey: '',
-    supabaseServiceKey: '',
-    elevenlabsAgentId: '',
-    githubRepoUrl: '',
-    vercelUrl: '',
-    vercelProjectId: '',
-  });
-
-  // ---------------------------------------------------------------------------
-  // HANDLERS
-  // ---------------------------------------------------------------------------
-
-  const updateForm = (field: keyof FormData, value: any) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+  const platformLabels: Record<PlatformType, string> = {
+    impact_investor: 'Impact Investor Platform',
+    commercial_investor: 'Commercial Investor Platform',
+    family_office: 'Family Office Platform',
+    founder_service_provider: 'Founder Service Provider Platform',
   };
 
-  const validateStep = (currentStep: Step): boolean => {
-    switch (currentStep) {
-      case 'website':
-        // Website is optional - can skip to manual entry
-        return true;
-      case 'company':
-        return !!(formData.companyName && formData.companyEmail);
-      case 'admin':
-        return !!(formData.adminFirstName && formData.adminLastName && formData.adminEmail);
-      case 'voice':
-        return !!formData.agentName;
-      default:
-        return true;
+  // Update step status based on orchestration results
+  const updateStepsFromResult = (result: OrchestrationResult) => {
+    setSteps(prev => prev.map(step => {
+      const resultStep = result.steps.find(s => s.step === step.id);
+      if (resultStep) {
+        return {
+          ...step,
+          status: resultStep.status === 'success' ? 'success' :
+                  resultStep.status === 'error' ? 'error' :
+                  resultStep.status === 'skipped' ? 'skipped' : 'pending',
+          error: resultStep.error,
+          duration: resultStep.duration,
+        };
+      }
+      return step;
+    }));
+  };
+
+  // Simulate step progress while waiting for orchestrator
+  const simulateProgress = async () => {
+    for (let i = 0; i < INITIAL_STEPS.length; i++) {
+      await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+      setSteps(prev => prev.map((step, idx) =>
+        idx === i ? { ...step, status: 'running' } :
+        idx < i ? { ...step, status: 'success' } : step
+      ));
     }
   };
 
-  const nextStep = () => {
-    if (!validateStep(step)) {
-      setError('Please fill in all required fields');
-      return;
-    }
-    setError('');
-    const steps: Step[] = ['website', 'company', 'admin', 'voice', 'review', 'creating'];
-    const idx = steps.indexOf(step);
-    if (idx < steps.length - 1) setStep(steps[idx + 1]);
-  };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentStep('creating');
+    setSteps(INITIAL_STEPS.map((s, i) => ({ ...s, status: i === 0 ? 'running' : 'pending' })));
 
-  const prevStep = () => {
-    const steps: Step[] = ['website', 'company', 'admin', 'voice', 'review', 'creating'];
-    const idx = steps.indexOf(step);
-    if (idx > 0) setStep(steps[idx - 1]);
-  };
-
-  // ---------------------------------------------------------------------------
-  // WEBSITE EXTRACTION
-  // ---------------------------------------------------------------------------
-
-  const extractBranding = async () => {
-    if (!formData.websiteUrl) {
-      setError('Please enter a website URL');
-      return;
-    }
-
-    // Normalize URL
-    let url = formData.websiteUrl.trim();
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-      updateForm('websiteUrl', url);
-    }
-
-    setExtractionStatus('extracting');
-    setExtractionMessage('Analyzing website...');
-    setError('');
+    // Start progress simulation
+    const progressPromise = simulateProgress();
 
     try {
-      // Stage 1: Fetching
-      setExtractionMessage('Fetching website content...');
-      await new Promise(r => setTimeout(r, 500)); // Brief pause for UX
-
-      // Stage 2: Extracting
-      setExtractionMessage('Extracting colors and logo...');
-
-      const response = await fetch('/api/setup/extract-branding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ websiteUrl: url }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Failed to extract branding');
-      }
-
-      // Stage 3: Processing
-      setExtractionMessage('Processing branding data...');
-      const data = await response.json();
-
-      if (!data.success) {
-        throw new Error(data.error || 'Extraction failed');
-      }
-
-      const branding: ExtractedBranding = data.branding;
-
-      // Stage 4: Applying
-      setExtractionMessage('Applying extracted branding...');
-      await new Promise(r => setTimeout(r, 300));
-
-      // Populate form with extracted data
-      setFormData(prev => ({
-        ...prev,
-        companyName: branding.company.name || prev.companyName,
-        companyWebsite: branding.company.website || url,
-        companyEmail: branding.contact.email || prev.companyEmail,
-        companyTagline: branding.company.tagline || prev.companyTagline,
-        companyDescription: branding.company.description || prev.companyDescription,
-        primaryColor: branding.colors.primary || DEFAULT_COLORS.primary,
-        accentColor: branding.colors.accent || DEFAULT_COLORS.accent,
-        backgroundColor: branding.colors.background || DEFAULT_COLORS.background,
-        logoUrl: branding.logo.url,
-        logoBase64: branding.logo.base64,
-        platformType: branding.platformType || 'commercial_investor',
-        focusAreas: branding.thesis.focusAreas || [],
-        sectors: branding.thesis.sectors || [],
-        philosophy: branding.thesis.philosophy || '',
-        adminEmail: branding.contact.email || prev.adminEmail,
-      }));
-
-      setExtractionStatus('complete');
-      setExtractionMessage(`Successfully extracted branding from ${branding.company.name || 'website'}`);
-
-      // Auto-advance after a brief moment
-      setTimeout(() => {
-        nextStep();
-      }, 1500);
-
-    } catch (err: any) {
-      console.error('Extraction error:', err);
-      setExtractionStatus('error');
-      setExtractionMessage(err.message || 'Failed to extract branding');
-      setError(err.message || 'Failed to extract branding. You can continue with manual entry.');
-    }
-  };
-
-  const skipExtraction = () => {
-    setExtractionStatus('idle');
-    nextStep();
-  };
-
-  // ---------------------------------------------------------------------------
-  // CREATION FLOW
-  // ---------------------------------------------------------------------------
-
-  const startCreation = async () => {
-    setStep('creating');
-    setError('');
-
-    const projectSlug = formData.companyName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40);
-
-    let supabaseUrl = '';
-    let supabaseProjectId = '';
-    let supabaseAnonKey = '';
-    let supabaseServiceKey = '';
-    let elevenlabsAgentId = '';
-    let githubRepoUrl = '';
-    let githubRepoName = '';
-    let vercelUrl = '';
-    let vercelProjectId = '';
-
-    try {
-      // ========== Step 1: Create Supabase Project ==========
-      setCreationStatus(prev => ({ ...prev, supabase: 'creating' }));
-      console.log('Creating Supabase project...');
-
-      const supabaseRes = await fetch('/api/setup/create-supabase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectName: projectSlug }),
-      });
-
-      if (!supabaseRes.ok) {
-        const err = await supabaseRes.json();
-        throw new Error(`Supabase: ${err.error || 'Failed to create project'}`);
-      }
-
-      const supabaseData = await supabaseRes.json();
-      supabaseUrl = supabaseData.url;
-      supabaseProjectId = supabaseData.projectId;
-      supabaseAnonKey = supabaseData.anonKey;
-      supabaseServiceKey = supabaseData.serviceKey;
-
-      setCreatedResources(prev => ({
-        ...prev,
-        supabaseUrl,
-        supabaseProjectId,
-        supabaseAnonKey,
-        supabaseServiceKey,
-      }));
-      console.log('✓ Supabase created:', supabaseProjectId);
-
-      setCreationStatus(prev => ({ ...prev, supabase: 'done', elevenlabs: 'creating' }));
-
-      // ========== Step 2: Create ElevenLabs Agent ==========
-      console.log('Creating ElevenLabs agent...');
-
-      const elevenlabsRes = await fetch('/api/setup/create-elevenlabs', {
+      const response = await fetch('/api/setup/orchestrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          companyName: formData.companyName,
+          companyWebsite: formData.companyWebsite,
+          companyEmail: formData.companyEmail,
+          adminFirstName: formData.adminFirstName,
+          adminLastName: formData.adminLastName,
+          adminEmail: formData.adminEmail,
+          adminPhone: formData.adminPhone,
           agentName: formData.agentName,
           voiceGender: formData.voiceGender,
-          companyName: formData.companyName,
-          webhookUrl: `${vercelUrl || ''}/api/webhooks/elevenlabs`,
+          platformMode: 'screening',
+          branding: {
+            company: {
+              name: formData.companyName,
+              tagline: 'AI-Powered Pitch Coaching',
+              description: `${formData.companyName} helps founders perfect their pitch.`,
+              website: formData.companyWebsite,
+            },
+            colors: { primary: '#8B5CF6', accent: '#10B981', background: '#0F172A', text: '#F8FAFC' },
+            logo: { url: null },
+            thesis: { focusAreas: [], sectors: [], philosophy: '' },
+            contact: { email: formData.companyEmail, phone: null, linkedin: null },
+            platformType: formData.platformType,
+          },
         }),
       });
 
-      if (elevenlabsRes.ok) {
-        const elevenlabsData = await elevenlabsRes.json();
-        elevenlabsAgentId = elevenlabsData.agentId;
-        setCreatedResources(prev => ({ ...prev, elevenlabsAgentId }));
-        console.log('✓ ElevenLabs agent created:', elevenlabsAgentId);
+      const data: OrchestrationResult = await response.json();
+      setResult(data);
+      updateStepsFromResult(data);
+
+      if (data.success) {
+        setCurrentStep('success');
       } else {
-        console.warn('ElevenLabs creation failed, continuing...');
+        setCurrentStep('error');
       }
-
-      setCreationStatus(prev => ({ ...prev, elevenlabs: 'done', github: 'creating' }));
-
-      // ========== Step 3: Create GitHub Repository ==========
-      console.log('Creating GitHub repository...');
-
-      // Build branding object for create-github
-      const branding: ExtractedBranding = {
-        company: {
-          name: formData.companyName,
-          tagline: formData.companyTagline,
-          description: formData.companyDescription,
-          website: formData.companyWebsite,
-        },
-        colors: {
-          primary: formData.primaryColor,
-          accent: formData.accentColor,
-          background: formData.backgroundColor,
-          text: '#F8FAFC',
-        },
-        logo: {
-          url: formData.logoUrl,
-          base64: formData.logoBase64,
-          type: null,
-          source: null,
-        },
-        ogImage: { url: null, base64: null },
-        thesis: {
-          focusAreas: formData.focusAreas,
-          sectors: formData.sectors,
-          stages: [],
-          philosophy: formData.philosophy,
-          idealFounder: '',
-        },
-        contact: {
-          email: formData.companyEmail,
-          phone: formData.adminPhone,
-          linkedin: null,
-        },
-        platformType: formData.platformType,
-      };
-
-      const githubRes = await fetch('/api/setup/create-github', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repoName: projectSlug,
-          branding,
-          admin: {
-            firstName: formData.adminFirstName,
-            lastName: formData.adminLastName,
-            email: formData.adminEmail,
-            phone: formData.adminPhone,
-          },
-          supabase: {
-            projectId: supabaseProjectId,
-            url: supabaseUrl,
-          },
-          elevenlabs: {
-            agentId: elevenlabsAgentId,
-          },
-        }),
-      });
-
-      if (!githubRes.ok) {
-        const err = await githubRes.json();
-        throw new Error(`GitHub: ${err.error || 'Failed to create repository'}`);
-      }
-
-      const githubData = await githubRes.json();
-      githubRepoUrl = githubData.repoUrl;
-      githubRepoName = githubData.repoName || projectSlug;
-
-      setCreatedResources(prev => ({ ...prev, githubRepoUrl }));
-      console.log('✓ GitHub repo created:', githubRepoUrl);
-
-      setCreationStatus(prev => ({ ...prev, github: 'done', vercel: 'creating' }));
-
-      // ========== Step 4: Create Vercel Project ==========
-      console.log('Creating Vercel project...');
-
-      const vercelRes = await fetch('/api/setup/create-vercel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectName: projectSlug,
-          githubRepo: githubRepoName,
-          envVars: {
-            NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
-            NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
-            SUPABASE_SERVICE_ROLE_KEY: supabaseServiceKey,
-            ELEVENLABS_API_KEY: '',
-            ELEVENLABS_AGENT_ID: elevenlabsAgentId,
-            NEXT_PUBLIC_COMPANY_NAME: formData.companyName,
-          },
-        }),
-      });
-
-      if (!vercelRes.ok) {
-        const err = await vercelRes.json();
-        throw new Error(`Vercel: ${err.error || 'Failed to create project'}`);
-      }
-
-      const vercelData = await vercelRes.json();
-      vercelUrl = vercelData.url || `https://${projectSlug}.vercel.app`;
-      vercelProjectId = vercelData.projectId;
-
-      setCreatedResources(prev => ({ ...prev, vercelUrl, vercelProjectId }));
-      console.log('✓ Vercel project created:', vercelUrl);
-
-      setCreationStatus(prev => ({ ...prev, vercel: 'done', deployment: 'creating' }));
-
-      // ========== Step 5: Configure Auth & Finalize ==========
-      console.log('Configuring Supabase auth...');
-
-      await fetch('/api/setup/configure-supabase-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectRef: supabaseProjectId,
-          siteUrl: vercelUrl,
-        }),
-      });
-
-      // Send welcome email
-      console.log('Sending welcome email...');
-
-      await fetch('/api/setup/send-welcome-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.adminEmail,
-          firstName: formData.adminFirstName,
-          companyName: formData.companyName,
-          platformUrl: vercelUrl,
-        }),
-      });
-
-      setCreationStatus(prev => ({ ...prev, deployment: 'done' }));
-      console.log('✓ Platform creation complete!');
-
     } catch (error: any) {
-      console.error('Creation failed:', error);
-      setError(error.message || 'Failed to create platform');
-
-      setCreationStatus(prev => {
-        const newStatus = { ...prev };
-        const steps: (keyof CreationStatus)[] = ['supabase', 'elevenlabs', 'github', 'vercel', 'deployment'];
-        for (const s of steps) {
-          if (newStatus[s] === 'creating') {
-            newStatus[s] = 'error';
-            break;
-          }
-        }
-        return newStatus;
+      setCurrentStep('error');
+      setResult({
+        success: false,
+        platformUrl: null,
+        steps: [],
+        resources: { supabase: null, github: null, vercel: null, elevenlabs: null },
+        error: error.message || 'An unexpected error occurred',
       });
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // UI HELPERS
-  // ---------------------------------------------------------------------------
-
-  const getStatusClass = (status: string) => {
-    if (status === 'creating') return 'bg-blue-500/10 border-blue-500/30';
-    if (status === 'done') return 'bg-green-500/10 border-green-500/30';
-    if (status === 'error') return 'bg-red-500/10 border-red-500/30';
-    return 'bg-slate-800 border-slate-700';
+  const handleRetry = () => {
+    setCurrentStep('form');
+    setSteps(INITIAL_STEPS);
+    setResult(null);
   };
 
-  const renderStatusIcon = (status: 'pending' | 'creating' | 'done' | 'error') => {
-    if (status === 'pending') return <div className="w-5 h-5 rounded-full border-2 border-gray-600" />;
-    if (status === 'creating') return <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />;
-    if (status === 'done') return <CheckCircle className="w-5 h-5 text-green-400" />;
-    return <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center text-white text-xs font-bold">!</div>;
-  };
+  // ============================================================================
+  // RENDER: FORM
+  // ============================================================================
 
-  // ---------------------------------------------------------------------------
-  // RENDER STEPS
-  // ---------------------------------------------------------------------------
-
-  const renderWebsiteStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
-          <Globe className="w-5 h-5 text-purple-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold">Website Extraction</h2>
-          <p className="text-sm text-slate-400">Auto-extract branding from your website</p>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Website URL</label>
-          <div className="flex gap-2">
-            <input
-              type="url"
-              value={formData.websiteUrl}
-              onChange={(e) => updateForm('websiteUrl', e.target.value)}
-              placeholder="https://example.com"
-              disabled={extractionStatus === 'extracting'}
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition disabled:opacity-50"
-            />
-            <button
-              onClick={extractBranding}
-              disabled={extractionStatus === 'extracting' || !formData.websiteUrl}
-              className="flex items-center gap-2 px-5 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:cursor-not-allowed rounded-lg font-medium transition"
-            >
-              {extractionStatus === 'extracting' ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Search className="w-5 h-5" />
-              )}
-              Extract
-            </button>
-          </div>
-          <p className="text-xs text-slate-500 mt-2">
-            We'll extract colors, logo, company info, and platform type automatically
-          </p>
-        </div>
-
-        {/* Extraction Status Box */}
-        {extractionStatus !== 'idle' && (
-          <div
-            className={`p-4 rounded-lg border transition-all ${
-              extractionStatus === 'extracting'
-                ? 'bg-blue-500/10 border-blue-500/30'
-                : extractionStatus === 'complete'
-                ? 'bg-green-500/10 border-green-500/30'
-                : 'bg-red-500/10 border-red-500/30'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              {extractionStatus === 'extracting' && (
-                <>
-                  <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
-                  <div>
-                    <div className="font-medium text-blue-400">Extraction Underway</div>
-                    <div className="text-sm text-slate-400">{extractionMessage}</div>
-                  </div>
-                </>
-              )}
-              {extractionStatus === 'complete' && (
-                <>
-                  <CheckCircle className="w-5 h-5 text-green-400" />
-                  <div>
-                    <div className="font-medium text-green-400">Extraction Complete!</div>
-                    <div className="text-sm text-slate-400">{extractionMessage}</div>
-                  </div>
-                  <Sparkles className="w-5 h-5 text-green-400 ml-auto" />
-                </>
-              )}
-              {extractionStatus === 'error' && (
-                <>
-                  <AlertCircle className="w-5 h-5 text-red-400" />
-                  <div>
-                    <div className="font-medium text-red-400">Extraction Failed</div>
-                    <div className="text-sm text-slate-400">{extractionMessage}</div>
-                  </div>
-                </>
-              )}
+  if (currentStep === 'form') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
+        <div className="max-w-2xl mx-auto">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold mb-2">RaiseReady Platform Setup</h1>
+            <p className="text-gray-400">Create a white-label pitch coaching platform in minutes</p>
+            <div className="mt-4 inline-block px-4 py-2 bg-purple-500/20 rounded-full text-purple-300 text-sm">
+              {platformLabels[platformType]}
             </div>
-
-            {/* Progress bar for extracting state */}
-            {extractionStatus === 'extracting' && (
-              <div className="mt-3 h-1 bg-slate-700 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-500 rounded-full animate-pulse" style={{ width: '60%' }} />
-              </div>
-            )}
           </div>
-        )}
 
-        {/* Preview extracted data */}
-        {extractionStatus === 'complete' && formData.companyName && (
-          <div className="p-4 bg-slate-800/50 rounded-lg space-y-3">
-            <div className="text-sm font-medium text-slate-400">Extracted Data Preview:</div>
+          <form onSubmit={handleSubmit} className="space-y-6 bg-slate-900 rounded-xl p-8">
+            <div className="space-y-4">
+              <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Company Information</h2>
 
-            <div className="flex items-center gap-4">
-              {formData.logoBase64 && (
-                <img
-                  src={formData.logoBase64}
-                  alt="Logo"
-                  className="w-12 h-12 object-contain rounded bg-white/10 p-1"
-                />
-              )}
               <div>
-                <div className="font-medium text-white">{formData.companyName}</div>
-                <div className="text-sm text-slate-400">{formData.companyTagline}</div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="text-sm text-slate-400">Colors:</div>
-              <div className="flex gap-2">
-                <div
-                  className="w-6 h-6 rounded border border-slate-600"
-                  style={{ backgroundColor: formData.primaryColor }}
-                  title={`Primary: ${formData.primaryColor}`}
-                />
-                <div
-                  className="w-6 h-6 rounded border border-slate-600"
-                  style={{ backgroundColor: formData.accentColor }}
-                  title={`Accent: ${formData.accentColor}`}
-                />
-                <div
-                  className="w-6 h-6 rounded border border-slate-600"
-                  style={{ backgroundColor: formData.backgroundColor }}
-                  title={`Background: ${formData.backgroundColor}`}
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="text-sm text-slate-400">Platform Type:</div>
-              <span className="text-sm px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
-                {PLATFORM_TYPE_LABELS[formData.platformType]}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Skip option */}
-        <div className="pt-4 border-t border-slate-800">
-          <button
-            onClick={skipExtraction}
-            className="text-sm text-slate-400 hover:text-white transition"
-          >
-            Skip extraction and enter details manually →
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderCompanyStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
-          <Building2 className="w-5 h-5 text-purple-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold">Company Information</h2>
-          <p className="text-sm text-slate-400">
-            {extractionStatus === 'complete' ? 'Review and edit extracted data' : 'Tell us about your organization'}
-          </p>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        {/* Logo Preview */}
-        {formData.logoBase64 && (
-          <div className="flex items-center gap-4 p-3 bg-slate-800/50 rounded-lg">
-            <img
-              src={formData.logoBase64}
-              alt="Logo"
-              className="w-16 h-16 object-contain rounded bg-white/10 p-2"
-            />
-            <div className="flex-1">
-              <div className="text-sm text-slate-400">Extracted Logo</div>
-              <button
-                onClick={() => {
-                  updateForm('logoUrl', null);
-                  updateForm('logoBase64', null);
-                }}
-                className="text-xs text-red-400 hover:text-red-300"
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Company Name *</label>
-          <input
-            type="text"
-            value={formData.companyName}
-            onChange={(e) => updateForm('companyName', e.target.value)}
-            placeholder="Acme Inc"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Tagline</label>
-          <input
-            type="text"
-            value={formData.companyTagline}
-            onChange={(e) => updateForm('companyTagline', e.target.value)}
-            placeholder="AI-Powered Pitch Coaching"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Company Email *</label>
-          <input
-            type="email"
-            value={formData.companyEmail}
-            onChange={(e) => updateForm('companyEmail', e.target.value)}
-            placeholder="contact@acme.com"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none transition"
-          />
-        </div>
-
-        {/* Platform Type Selector */}
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Platform Type</label>
-          <div className="grid grid-cols-2 gap-3">
-            {(Object.keys(PLATFORM_TYPE_LABELS) as PlatformType[]).map((type) => (
-              <button
-                key={type}
-                onClick={() => updateForm('platformType', type)}
-                className={`p-3 rounded-lg border-2 text-left transition-all ${
-                  formData.platformType === type
-                    ? 'border-purple-500 bg-purple-500/10'
-                    : 'border-slate-700 hover:border-slate-600'
-                }`}
-              >
-                <div className="font-medium text-sm">{PLATFORM_TYPE_LABELS[type]}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Color Pickers */}
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">
-            <Palette className="w-4 h-4 inline mr-1" />
-            Brand Colors
-          </label>
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <label className="block text-xs text-slate-500 mb-1">Primary</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={formData.primaryColor}
-                  onChange={(e) => updateForm('primaryColor', e.target.value)}
-                  className="w-10 h-10 rounded cursor-pointer bg-transparent"
-                />
+                <label className="block text-sm font-medium mb-1">Company Name *</label>
                 <input
                   type="text"
-                  value={formData.primaryColor}
-                  onChange={(e) => updateForm('primaryColor', e.target.value)}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono"
+                  required
+                  value={formData.companyName}
+                  onChange={e => setFormData(prev => ({ ...prev, companyName: e.target.value }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="Acme Ventures"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Company Website</label>
+                <input
+                  type="url"
+                  value={formData.companyWebsite}
+                  onChange={e => setFormData(prev => ({ ...prev, companyWebsite: e.target.value }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="https://acme.vc"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Company Email *</label>
+                <input
+                  type="email"
+                  required
+                  value={formData.companyEmail}
+                  onChange={e => setFormData(prev => ({ ...prev, companyEmail: e.target.value }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="contact@acme.vc"
                 />
               </div>
             </div>
-            <div className="flex-1">
-              <label className="block text-xs text-slate-500 mb-1">Accent</label>
-              <div className="flex items-center gap-2">
+
+            <div className="space-y-4">
+              <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">Administrator</h2>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">First Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.adminFirstName}
+                    onChange={e => setFormData(prev => ({ ...prev, adminFirstName: e.target.value }))}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Last Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.adminLastName}
+                    onChange={e => setFormData(prev => ({ ...prev, adminLastName: e.target.value }))}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Admin Email *</label>
                 <input
-                  type="color"
-                  value={formData.accentColor}
-                  onChange={(e) => updateForm('accentColor', e.target.value)}
-                  className="w-10 h-10 rounded cursor-pointer bg-transparent"
+                  type="email"
+                  required
+                  value={formData.adminEmail}
+                  onChange={e => setFormData(prev => ({ ...prev, adminEmail: e.target.value }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">Phone</label>
                 <input
-                  type="text"
-                  value={formData.accentColor}
-                  onChange={(e) => updateForm('accentColor', e.target.value)}
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono"
+                  type="tel"
+                  value={formData.adminPhone}
+                  onChange={e => setFormData(prev => ({ ...prev, adminPhone: e.target.value }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 />
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 
-  const renderAdminStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
-          <User className="w-5 h-5 text-blue-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold">Admin Contact</h2>
-          <p className="text-sm text-slate-400">Who should we send the platform details to?</p>
-        </div>
-      </div>
+            <div className="space-y-4">
+              <h2 className="text-xl font-semibold border-b border-slate-700 pb-2">AI Coach</h2>
 
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">First Name *</label>
-            <input
-              type="text"
-              value={formData.adminFirstName}
-              onChange={(e) => updateForm('adminFirstName', e.target.value)}
-              placeholder="John"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">Last Name *</label>
-            <input
-              type="text"
-              value={formData.adminLastName}
-              onChange={(e) => updateForm('adminLastName', e.target.value)}
-              placeholder="Smith"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Email *</label>
-          <input
-            type="email"
-            value={formData.adminEmail}
-            onChange={(e) => updateForm('adminEmail', e.target.value)}
-            placeholder="john@acme.com"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Phone</label>
-          <input
-            type="tel"
-            value={formData.adminPhone}
-            onChange={(e) => updateForm('adminPhone', e.target.value)}
-            placeholder="+1 555 123 4567"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
-          />
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderVoiceStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
-          <Mic className="w-5 h-5 text-green-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold">AI Coach Configuration</h2>
-          <p className="text-sm text-slate-400">Configure your AI pitch coach</p>
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Coach Name *</label>
-          <input
-            type="text"
-            value={formData.agentName}
-            onChange={(e) => updateForm('agentName', e.target.value)}
-            placeholder="Maya"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none transition"
-          />
-          <p className="text-xs text-slate-500 mt-2">The AI coach that will help founders perfect their pitch</p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-3">Voice</label>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              { value: 'female', label: 'Female', desc: 'Sarah - Warm & Professional' },
-              { value: 'male', label: 'Male', desc: 'Adam - Deep & Confident' },
-            ].map((option) => (
-              <button
-                key={option.value}
-                onClick={() => updateForm('voiceGender', option.value as 'female' | 'male')}
-                className={`p-4 rounded-xl border-2 text-left transition-all ${
-                  formData.voiceGender === option.value
-                    ? 'border-green-500 bg-green-500/10'
-                    : 'border-slate-700 hover:border-slate-600'
-                }`}
-              >
-                <div className="font-medium">{option.label}</div>
-                <div className="text-xs text-slate-400 mt-1">{option.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderReviewStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-orange-500/20 rounded-lg flex items-center justify-center">
-          <CheckCircle className="w-5 h-5 text-orange-400" />
-        </div>
-        <div>
-          <h2 className="text-xl font-bold">Review & Create</h2>
-          <p className="text-sm text-slate-400">Confirm your configuration</p>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        {/* Company */}
-        <div className="p-4 bg-slate-800/50 rounded-lg">
-          <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-            <Building2 className="w-4 h-4" />
-            Company
-          </div>
-          <div className="flex items-center gap-3">
-            {formData.logoBase64 && (
-              <img src={formData.logoBase64} alt="Logo" className="w-10 h-10 object-contain rounded bg-white/10 p-1" />
-            )}
-            <div>
-              <div className="text-white font-medium">{formData.companyName}</div>
-              <div className="text-sm text-slate-400">{formData.companyEmail}</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Coach Name</label>
+                  <input
+                    type="text"
+                    value={formData.agentName}
+                    onChange={e => setFormData(prev => ({ ...prev, agentName: e.target.value }))}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Voice</label>
+                  <select
+                    value={formData.voiceGender}
+                    onChange={e => setFormData(prev => ({ ...prev, voiceGender: e.target.value as 'female' | 'male' }))}
+                    className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  >
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                  </select>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 mt-2">
-            <div
-              className="w-4 h-4 rounded"
-              style={{ backgroundColor: formData.primaryColor }}
-            />
-            <div
-              className="w-4 h-4 rounded"
-              style={{ backgroundColor: formData.accentColor }}
-            />
-            <span className="text-xs text-slate-500 ml-2">
-              {PLATFORM_TYPE_LABELS[formData.platformType]}
-            </span>
-          </div>
-        </div>
 
-        {/* Admin */}
-        <div className="p-4 bg-slate-800/50 rounded-lg">
-          <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-            <User className="w-4 h-4" />
-            Admin
-          </div>
-          <div className="text-white font-medium">
-            {formData.adminFirstName} {formData.adminLastName}
-          </div>
-          <div className="text-sm text-slate-400">{formData.adminEmail}</div>
-        </div>
-
-        {/* Voice */}
-        <div className="p-4 bg-slate-800/50 rounded-lg">
-          <div className="flex items-center gap-2 text-slate-400 text-sm mb-2">
-            <Mic className="w-4 h-4" />
-            AI Coach
-          </div>
-          <div className="text-white font-medium">{formData.agentName}</div>
-          <div className="text-sm text-slate-400 capitalize">{formData.voiceGender} voice</div>
-        </div>
-
-        {/* What will be created */}
-        <div className="p-4 bg-purple-500/10 border border-purple-500/30 rounded-lg">
-          <div className="font-medium text-purple-400 mb-3">Will Be Created:</div>
-          <ul className="space-y-2 text-sm text-slate-300">
-            <li className="flex items-center gap-2">
-              <Database className="w-4 h-4 text-green-400" />
-              Supabase database with schema & storage
-            </li>
-            <li className="flex items-center gap-2">
-              <Mic className="w-4 h-4 text-purple-400" />
-              ElevenLabs voice agent ({formData.agentName})
-            </li>
-            <li className="flex items-center gap-2">
-              <Globe className="w-4 h-4 text-slate-400" />
-              GitHub repository with {PLATFORM_TYPE_LABELS[formData.platformType]} config
-            </li>
-            <li className="flex items-center gap-2">
-              <Rocket className="w-4 h-4 text-blue-400" />
-              Vercel deployment with custom branding
-            </li>
-            <li className="flex items-center gap-2">
-              <Mail className="w-4 h-4 text-orange-400" />
-              Welcome email with platform URL
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderCreatingStep = () => (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="text-center mb-6">
-        <h2 className="text-xl font-bold mb-2">Creating Your Platform</h2>
-        <p className="text-slate-400 text-sm">This may take 2-3 minutes...</p>
-      </div>
-
-      <div className="space-y-3">
-        {[
-          { key: 'supabase', label: 'Creating Supabase database & storage', icon: Database },
-          { key: 'elevenlabs', label: 'Creating ElevenLabs voice agent', icon: Mic },
-          { key: 'github', label: 'Setting up GitHub repository', icon: Globe },
-          { key: 'vercel', label: 'Creating Vercel deployment', icon: Rocket },
-          { key: 'deployment', label: 'Configuring auth & sending email', icon: CheckCircle },
-        ].map((item) => {
-          const status = creationStatus[item.key as keyof CreationStatus];
-          const Icon = item.icon;
-          return (
-            <div
-              key={item.key}
-              className={`flex items-center gap-3 p-4 rounded-lg border transition-all ${getStatusClass(status)}`}
+            <button
+              type="submit"
+              className="w-full py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition-colors"
             >
-              {renderStatusIcon(status)}
-              <Icon className="w-5 h-5 text-slate-400" />
-              <span className={status === 'done' ? 'text-green-400' : 'text-slate-300'}>
-                {item.label}
-              </span>
-              {status === 'done' && item.key === 'vercel' && createdResources.vercelUrl && (
-                <a
-                  href={createdResources.vercelUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-auto text-blue-400 hover:underline text-sm flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  Preview
-                </a>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Success */}
-      {creationStatus.deployment === 'done' && (
-        <div className="mt-8 p-6 bg-green-500/10 border border-green-500/30 rounded-xl text-center">
-          <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-green-400" />
-          </div>
-
-          <h3 className="text-2xl font-bold text-green-400 mb-2">Platform Created!</h3>
-          <p className="text-slate-300 mb-6">
-            {formData.companyName}'s AI Pitch Coaching platform is now live.
-          </p>
-
-          <div className="flex gap-4 justify-center flex-wrap">
-            <a
-              href={createdResources.vercelUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-lg font-medium transition"
-            >
-              <Phone className="w-5 h-5" />
-              Visit Platform
-            </a>
-            {createdResources.githubRepoUrl && (
-              <a
-                href={createdResources.githubRepoUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-6 py-3 rounded-lg font-medium transition"
-              >
-                <Globe className="w-5 h-5" />
-                View Code
-              </a>
-            )}
-          </div>
-
-          <p className="text-xs text-slate-500 mt-6">
-            A welcome email has been sent to {formData.adminEmail}
-          </p>
+              Create Platform
+            </button>
+          </form>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  }
 
-  // ---------------------------------------------------------------------------
-  // MAIN RENDER
-  // ---------------------------------------------------------------------------
-
-  const stepsList = [
-    { key: 'website', label: 'Extract', icon: Globe },
-    { key: 'company', label: 'Company', icon: Building2 },
-    { key: 'admin', label: 'Admin', icon: User },
-    { key: 'voice', label: 'Voice', icon: Mic },
-    { key: 'review', label: 'Review', icon: CheckCircle },
-  ];
+  // ============================================================================
+  // RENDER: CREATING / SUCCESS / ERROR
+  // ============================================================================
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white py-8 px-4">
+    <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
       <div className="max-w-2xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">RaiseReady Platform Setup</h1>
-          <p className="text-slate-400">Create a white-label pitch coaching platform in minutes</p>
+          <h1 className="text-3xl font-bold mb-2">
+            {currentStep === 'creating' && 'Creating Your Platform'}
+            {currentStep === 'success' && 'Platform Created!'}
+            {currentStep === 'error' && 'Setup Failed'}
+          </h1>
+          <p className="text-gray-400">
+            {currentStep === 'creating' && 'This may take 2-3 minutes...'}
+            {currentStep === 'success' && 'Your platform is ready to use'}
+            {currentStep === 'error' && (result?.rollback?.performed ? 'Resources have been cleaned up' : 'An error occurred during setup')}
+          </p>
         </div>
 
-        {/* Progress Steps */}
-        {step !== 'creating' && (
-          <div className="flex justify-center mb-8">
-            <div className="flex items-center gap-2">
-              {stepsList.map((s, i) => {
-                const steps: Step[] = ['website', 'company', 'admin', 'voice', 'review'];
-                const isActive = step === s.key;
-                const isPast = steps.indexOf(step) > steps.indexOf(s.key as Step);
-                const Icon = s.icon;
+        <div className="bg-slate-900 rounded-xl p-8">
+          {/* Steps */}
+          <div className="mb-8">
+            {steps.map((step, idx) => (
+              <StepItem key={step.id} step={step} isLast={idx === steps.length - 1} />
+            ))}
+          </div>
 
-                return (
-                  <div key={s.key} className="flex items-center">
-                    <div
-                      className={`flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all ${
-                        isActive
-                          ? 'border-purple-500 bg-purple-500/20 text-purple-400'
-                          : isPast
-                          ? 'border-green-500 bg-green-500/20 text-green-400'
-                          : 'border-slate-700 text-slate-500'
-                      }`}
-                    >
-                      {isPast ? <CheckCircle className="w-5 h-5" /> : <Icon className="w-5 h-5" />}
-                    </div>
-                    {i < stepsList.length - 1 && (
-                      <div className={`w-6 h-0.5 mx-1 ${isPast ? 'bg-green-500' : 'bg-slate-700'}`} />
-                    )}
-                  </div>
-                );
-              })}
+          {/* Success Panel */}
+          {currentStep === 'success' && result && (
+            <div className="border-t border-slate-700 pt-6 space-y-4">
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <h3 className="text-green-400 font-semibold mb-2">Your platform is live!</h3>
+                <a
+                  href={result.platformUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-green-300 hover:text-green-200"
+                >
+                  {result.platformUrl}
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              </div>
+
+              {result.resources.github && (
+                <div className="bg-slate-800 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-400 mb-1">GitHub Repository</h4>
+                  <a
+                    href={result.resources.github.repoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-blue-400 hover:text-blue-300"
+                  >
+                    {result.resources.github.repoUrl}
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+              )}
+
+              {result.duration && (
+                <p className="text-sm text-gray-500 text-center">
+                  Completed in {(result.duration / 1000).toFixed(1)} seconds
+                </p>
+              )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Error */}
-        {error && (
-          <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
-            {error}
-          </div>
-        )}
+          {/* Error Panel */}
+          {currentStep === 'error' && result && (
+            <div className="border-t border-slate-700 pt-6 space-y-4">
+              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                <h3 className="text-red-400 font-semibold mb-2">Error</h3>
+                <p className="text-red-300">{result.error || 'An unexpected error occurred'}</p>
+              </div>
 
-        {/* Step Content */}
-        {step === 'website' && renderWebsiteStep()}
-        {step === 'company' && renderCompanyStep()}
-        {step === 'admin' && renderAdminStep()}
-        {step === 'voice' && renderVoiceStep()}
-        {step === 'review' && renderReviewStep()}
-        {step === 'creating' && renderCreatingStep()}
+              {result.rollback?.performed && (
+                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
+                  <h3 className="text-yellow-400 font-semibold mb-2">Cleanup Performed</h3>
+                  <p className="text-yellow-300 text-sm">
+                    Any partially created resources have been automatically deleted.
+                  </p>
+                </div>
+              )}
 
-        {/* Navigation */}
-        {step !== 'creating' && step !== 'website' && (
-          <div className="flex justify-between mt-6">
-            <button
-              onClick={prevStep}
-              className="flex items-center gap-2 px-5 py-2.5 border border-slate-700 rounded-lg hover:bg-slate-800 transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-
-            {step === 'review' ? (
               <button
-                onClick={startCreation}
-                className="flex items-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-500 rounded-lg font-medium transition"
+                onClick={handleRetry}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
               >
-                <Rocket className="w-4 h-4" />
-                Create Platform
+                <RotateCcw className="w-4 h-4" />
+                Try Again
               </button>
-            ) : (
-              <button
-                onClick={nextStep}
-                className="flex items-center gap-2 px-6 py-2.5 bg-purple-600 hover:bg-purple-500 rounded-lg font-medium transition"
-              >
-                Next
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
