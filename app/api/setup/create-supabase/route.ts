@@ -1,9 +1,7 @@
 ﻿// app/api/setup/create-supabase/route.ts
 // ============================================================================
-// CREATE SUPABASE PROJECT - FAST VERSION
-//
-// Don't wait for ACTIVE_HEALTHY - just get keys and return
-// Migrations will retry if project isn't ready yet
+// CREATE SUPABASE PROJECT
+// Wait for ACTIVE_HEALTHY before returning to ensure project is connectable
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -56,9 +54,23 @@ export async function POST(req: NextRequest) {
       const existing = projects.find((p: any) => p.name === safeName);
 
       if (existing) {
-        console.log(`[CreateSupabase] Already exists: ${existing.id}`);
+        console.log(`[CreateSupabase] Already exists: ${existing.id}, status: ${existing.status}`);
 
-        // Get keys for existing project
+        // Wait for existing project to be ready if needed
+        if (existing.status !== 'ACTIVE_HEALTHY') {
+          console.log(`[CreateSupabase] Waiting for existing project to be ready...`);
+          for (let i = 0; i < 24; i++) {
+            await sleep(5000);
+            const statusRes = await fetch(`${SUPABASE_API}/projects/${existing.id}`, { headers });
+            if (statusRes.ok) {
+              const status = await statusRes.json();
+              console.log(`[CreateSupabase] Status: ${status.status}`);
+              if (status.status === 'ACTIVE_HEALTHY') break;
+            }
+          }
+        }
+
+        // Get keys
         const keysRes = await fetch(`${SUPABASE_API}/projects/${existing.id}/api-keys`, { headers });
         if (keysRes.ok) {
           const keys = await keysRes.json();
@@ -108,15 +120,41 @@ export async function POST(req: NextRequest) {
     console.log(`[CreateSupabase] Created: ${projectRef}`);
 
     // ========================================================================
-    // Wait briefly for keys to be available (max 30 seconds)
+    // Wait for ACTIVE_HEALTHY status (max 2 minutes)
+    // This is REQUIRED - without this, migrations will fail
     // ========================================================================
+    console.log(`[CreateSupabase] Waiting for ACTIVE_HEALTHY...`);
+
+    let isReady = false;
+    for (let i = 0; i < 24; i++) {
+      await sleep(5000);
+
+      const statusRes = await fetch(`${SUPABASE_API}/projects/${projectRef}`, { headers });
+      if (statusRes.ok) {
+        const status = await statusRes.json();
+        console.log(`[CreateSupabase] Status (${i + 1}/24): ${status.status}`);
+
+        if (status.status === 'ACTIVE_HEALTHY') {
+          isReady = true;
+          console.log(`[CreateSupabase] Project ready!`);
+          break;
+        }
+      }
+    }
+
+    if (!isReady) {
+      console.warn(`[CreateSupabase] Project not fully ready after 2 minutes, proceeding anyway...`);
+    }
+
+    // ========================================================================
+    // Get API keys
+    // ========================================================================
+    console.log(`[CreateSupabase] Getting API keys...`);
+
     let anonKey = '';
     let serviceKey = '';
 
-    for (let i = 0; i < 10; i++) {
-      await sleep(3000);
-      console.log(`[CreateSupabase] Getting keys (${i + 1}/10)...`);
-
+    for (let i = 0; i < 5; i++) {
       const keysRes = await fetch(`${SUPABASE_API}/projects/${projectRef}/api-keys`, { headers });
 
       if (keysRes.ok) {
@@ -129,16 +167,18 @@ export async function POST(req: NextRequest) {
           break;
         }
       }
+
+      await sleep(2000);
     }
 
     if (!serviceKey) {
       return NextResponse.json({
-        error: 'Project created but keys not available yet. Try again in a minute.'
+        error: 'Project created but keys not available. Try again.'
       }, { status: 500 });
     }
 
     // ========================================================================
-    // Return immediately - don't wait for ACTIVE_HEALTHY
+    // Return
     // ========================================================================
     return NextResponse.json({
       success: true,
@@ -150,6 +190,7 @@ export async function POST(req: NextRequest) {
       serviceRoleKey: serviceKey,
       dbPassword,
       region,
+      ready: isReady,
     });
 
   } catch (error: any) {
@@ -161,7 +202,7 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     service: 'create-supabase',
-    version: 'fast',
-    maxWait: '30 seconds for keys only',
+    description: 'Creates Supabase project and waits for ACTIVE_HEALTHY',
+    maxWait: '2 minutes',
   });
 }
