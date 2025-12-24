@@ -77,8 +77,9 @@ async function verifySupabase(
       return { verified: false, details: 'Cannot connect to Supabase REST API' };
     }
 
-    // Check 2: Verify schema exists by checking for a core table
-    const schemaCheck = await fetch(`${url}/rest/v1/platforms?select=id&limit=1`, {
+    // Check 2: Verify schema exists by checking for core tables
+    // Schema creates: user_roles, founder_profiles, pitch_decks, coaching_sessions
+    const schemaCheck = await fetch(`${url}/rest/v1/founder_profiles?select=id&limit=1`, {
       headers: {
         'apikey': serviceKey,
         'Authorization': `Bearer ${serviceKey}`,
@@ -87,7 +88,19 @@ async function verifySupabase(
 
     // 200 = table exists (even if empty), 404 = table doesn't exist
     if (schemaCheck.status === 404) {
-      return { verified: false, details: 'Schema not applied - platforms table missing' };
+      return { verified: false, details: 'Schema not applied - founder_profiles table missing' };
+    }
+
+    // Also verify user_roles table exists
+    const rolesCheck = await fetch(`${url}/rest/v1/user_roles?select=id&limit=1`, {
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    });
+
+    if (rolesCheck.status === 404) {
+      return { verified: false, details: 'Schema partially applied - user_roles table missing' };
     }
 
     // Check 3: Verify auth is configured via Management API
