@@ -2,7 +2,7 @@
 
 import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw, Sparkles, Globe } from 'lucide-react';
+import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw, Sparkles, Globe, Trash2 } from 'lucide-react';
 
 // ============================================================================
 // TYPES
@@ -19,6 +19,7 @@ interface Step {
   status: StepStatus;
   error?: string;
   duration?: number;
+  isCleanup?: boolean;
 }
 
 interface ExtractedBranding {
@@ -60,11 +61,18 @@ interface OrchestrationResult {
 }
 
 // ============================================================================
-// STEP DEFINITIONS
+// STEP DEFINITIONS - All steps including cleanup
 // ============================================================================
 
 const INITIAL_STEPS: Step[] = [
+  // Pre-cleanup steps
+  { id: 'cleanup-supabase', label: 'Checking existing Supabase', description: 'Looking for existing project to clean up', status: 'pending', isCleanup: true },
+  { id: 'cleanup-vercel', label: 'Checking existing Vercel', description: 'Looking for existing deployment to clean up', status: 'pending', isCleanup: true },
+  { id: 'cleanup-github', label: 'Checking existing GitHub', description: 'Looking for existing repository to clean up', status: 'pending', isCleanup: true },
+
+  // Creation steps
   { id: 'create-supabase', label: 'Creating Supabase project', description: 'Setting up database and authentication', status: 'pending' },
+  { id: 'wait-supabase', label: 'Waiting for Supabase', description: 'Project initializing...', status: 'pending' },
   { id: 'run-migrations', label: 'Applying database schema', description: 'Creating tables, policies, and storage', status: 'pending' },
   { id: 'create-elevenlabs', label: 'Creating voice agent', description: 'Setting up AI voice coaching', status: 'pending' },
   { id: 'create-github', label: 'Setting up repository', description: 'Creating codebase from template', status: 'pending' },
@@ -78,7 +86,17 @@ const INITIAL_STEPS: Step[] = [
 // COMPONENTS
 // ============================================================================
 
-function StepIcon({ status }: { status: StepStatus }) {
+function StepIcon({ status, isCleanup }: { status: StepStatus; isCleanup?: boolean }) {
+  if (isCleanup) {
+    switch (status) {
+      case 'success': return <Trash2 className="w-5 h-5 text-orange-500" />;
+      case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
+      case 'running': return <Loader2 className="w-5 h-5 text-orange-400 animate-spin" />;
+      case 'skipped': return <Circle className="w-5 h-5 text-gray-500" />;
+      default: return <Circle className="w-5 h-5 text-gray-600" />;
+    }
+  }
+
   switch (status) {
     case 'success': return <CheckCircle className="w-6 h-6 text-green-500" />;
     case 'error': return <XCircle className="w-6 h-6 text-red-500" />;
@@ -89,31 +107,33 @@ function StepIcon({ status }: { status: StepStatus }) {
 }
 
 function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
+  const isCleanup = step.isCleanup;
+
   return (
-    <div className="flex gap-4">
+    <div className={`flex gap-3 ${isCleanup ? 'opacity-80' : ''}`}>
       <div className="flex flex-col items-center">
-        <StepIcon status={step.status} />
+        <StepIcon status={step.status} isCleanup={isCleanup} />
         {!isLast && (
-          <div className={`w-0.5 h-full min-h-[40px] mt-2 ${
-            step.status === 'success' ? 'bg-green-500' : 
+          <div className={`w-0.5 h-full min-h-[32px] mt-1 ${
+            step.status === 'success' ? (isCleanup ? 'bg-orange-500/50' : 'bg-green-500') : 
             step.status === 'error' ? 'bg-red-500' : 'bg-gray-700'
           }`} />
         )}
       </div>
-      <div className="flex-1 pb-8">
+      <div className={`flex-1 ${isCleanup ? 'pb-4' : 'pb-6'}`}>
         <div className="flex items-center gap-2">
-          <h3 className={`font-medium ${
-            step.status === 'running' ? 'text-blue-400' :
-            step.status === 'success' ? 'text-green-400' :
+          <h3 className={`${isCleanup ? 'text-sm' : 'font-medium'} ${
+            step.status === 'running' ? (isCleanup ? 'text-orange-400' : 'text-blue-400') :
+            step.status === 'success' ? (isCleanup ? 'text-orange-400' : 'text-green-400') :
             step.status === 'error' ? 'text-red-400' : 'text-gray-400'
           }`}>
             {step.label}
           </h3>
-          {step.duration && (
+          {step.duration && step.duration > 0 && (
             <span className="text-xs text-gray-500">({(step.duration / 1000).toFixed(1)}s)</span>
           )}
         </div>
-        <p className="text-sm text-gray-500">{step.description}</p>
+        <p className={`text-sm text-gray-500 ${isCleanup ? 'text-xs' : ''}`}>{step.description}</p>
         {step.error && <p className="text-sm text-red-400 mt-1">{step.error}</p>}
       </div>
     </div>
@@ -168,6 +188,81 @@ function SetupContent() {
     commercial_investor: 'Commercial Investor Platform',
     family_office: 'Family Office Platform',
     founder_service_provider: 'Founder Service Provider Platform',
+  };
+
+  // ============================================================================
+  // STEP SIMULATION - Show progress as orchestration runs
+  // ============================================================================
+
+  const simulateSteps = async () => {
+    const stepOrder = [
+      'cleanup-supabase',
+      'cleanup-vercel',
+      'cleanup-github',
+      'create-supabase',
+      'wait-supabase',
+      'run-migrations',
+      'create-elevenlabs',
+      'create-github',
+      'create-vercel',
+      'configure-auth',
+      'trigger-deployment',
+      'send-welcome-email',
+    ];
+
+    // Start cleanup steps
+    for (let i = 0; i < 3; i++) {
+      setSteps(prev => prev.map((s, idx) => ({
+        ...s,
+        status: idx === i ? 'running' : idx < i ? 'success' : s.status,
+      })));
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    // Mark cleanup complete
+    setSteps(prev => prev.map((s, idx) => ({
+      ...s,
+      status: idx < 3 ? 'success' : idx === 3 ? 'running' : 'pending',
+    })));
+  };
+
+  const updateStepsFromResult = (result: OrchestrationResult) => {
+    // Map orchestrator step names to our UI step names
+    const stepMapping: Record<string, string[]> = {
+      'pre-cleanup': ['cleanup-supabase', 'cleanup-vercel', 'cleanup-github'],
+      'create-supabase': ['create-supabase', 'wait-supabase'],
+      'run-migrations': ['run-migrations'],
+      'create-elevenlabs': ['create-elevenlabs'],
+      'create-github': ['create-github'],
+      'create-vercel': ['create-vercel'],
+      'configure-auth': ['configure-auth'],
+      'trigger-deployment': ['trigger-deployment'],
+      'send-welcome-email': ['send-welcome-email'],
+    };
+
+    setSteps(prev => {
+      const newSteps = [...prev];
+
+      for (const resultStep of result.steps) {
+        const uiStepIds = stepMapping[resultStep.step] || [resultStep.step];
+
+        for (const uiStepId of uiStepIds) {
+          const idx = newSteps.findIndex(s => s.id === uiStepId);
+          if (idx !== -1) {
+            newSteps[idx] = {
+              ...newSteps[idx],
+              status: resultStep.status === 'success' ? 'success' :
+                      resultStep.status === 'error' ? 'error' :
+                      resultStep.status === 'skipped' ? 'skipped' : 'pending',
+              error: resultStep.error,
+              duration: resultStep.duration ? resultStep.duration / uiStepIds.length : undefined,
+            };
+          }
+        }
+      }
+
+      return newSteps;
+    });
   };
 
   // ============================================================================
@@ -230,26 +325,12 @@ function SetupContent() {
   // ORCHESTRATION
   // ============================================================================
 
-  const updateStepsFromResult = (result: OrchestrationResult) => {
-    setSteps(prev => prev.map(step => {
-      const resultStep = result.steps.find(s => s.step === step.id);
-      if (resultStep) {
-        return {
-          ...step,
-          status: resultStep.status === 'success' ? 'success' :
-                  resultStep.status === 'error' ? 'error' :
-                  resultStep.status === 'skipped' ? 'skipped' : 'pending',
-          error: resultStep.error,
-          duration: resultStep.duration,
-        };
-      }
-      return step;
-    }));
-  };
-
   const handleCreate = async () => {
     setCurrentStep('creating');
-    setSteps(INITIAL_STEPS.map((s, i) => ({ ...s, status: i === 0 ? 'running' : 'pending' })));
+    setSteps(INITIAL_STEPS);
+
+    // Start step simulation
+    simulateSteps();
 
     try {
       const response = await fetch('/api/setup/orchestrate', {
@@ -526,6 +607,9 @@ function SetupContent() {
   // RENDER: CREATING / SUCCESS / ERROR
   // ============================================================================
 
+  const cleanupSteps = steps.filter(s => s.isCleanup);
+  const creationSteps = steps.filter(s => !s.isCleanup);
+
   return (
     <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
       <div className="max-w-2xl mx-auto">
@@ -543,10 +627,30 @@ function SetupContent() {
         </div>
 
         <div className="bg-slate-900 rounded-xl p-8">
-          {/* Steps */}
+          {/* Cleanup Steps Section */}
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-orange-400 mb-3 flex items-center gap-2">
+              <Trash2 className="w-4 h-4" />
+              Pre-flight Cleanup
+            </h3>
+            <div className="pl-2 border-l-2 border-orange-500/30">
+              {cleanupSteps.map((step, idx) => (
+                <StepItem key={step.id} step={step} isLast={idx === cleanupSteps.length - 1} />
+              ))}
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-slate-700 my-6"></div>
+
+          {/* Creation Steps Section */}
           <div className="mb-8">
-            {steps.map((step, idx) => (
-              <StepItem key={step.id} step={step} isLast={idx === steps.length - 1} />
+            <h3 className="text-sm font-medium text-blue-400 mb-3 flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              Platform Creation
+            </h3>
+            {creationSteps.map((step, idx) => (
+              <StepItem key={step.id} step={step} isLast={idx === creationSteps.length - 1} />
             ))}
           </div>
 
