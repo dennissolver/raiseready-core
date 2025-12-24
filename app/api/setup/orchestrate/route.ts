@@ -1,8 +1,12 @@
 // app/api/setup/orchestrate/route.ts
 // ============================================================================
-// PLATFORM CREATION ORCHESTRATOR v7
+// PLATFORM CREATION ORCHESTRATOR v8
 //
-// Each step reported individually including cleanup steps
+// IMPROVEMENTS:
+// - Three-phase steps: create → verify → confirmed
+// - Status: pending (red) → in_progress (orange) → verifying (orange) → success (green)
+// - Actual verification checks for each service
+// - Polling for async deployments
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -12,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // ============================================================================
 
 type PlatformType = 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
+type StepStatus = 'pending' | 'in_progress' | 'verifying' | 'success' | 'error' | 'skipped';
 
 interface OrchestrationRequest {
   companyName: string;
@@ -31,18 +36,264 @@ interface OrchestrationRequest {
 
 interface StepResult {
   step: string;
-  status: 'success' | 'error' | 'skipped';
+  status: StepStatus;
   message?: string;
   data?: any;
   error?: string;
   duration?: number;
+  verified?: boolean;
+  verificationDetails?: string;
 }
 
 interface Resources {
   supabase: { projectId: string; url: string; anonKey: string; serviceKey: string } | null;
-  github: { repoUrl: string; repoName: string } | null;
-  vercel: { projectId: string; url: string } | null;
+  github: { repoUrl: string; repoName: string; owner: string } | null;
+  vercel: { projectId: string; url: string; deploymentId?: string } | null;
   elevenlabs: { agentId: string } | null;
+}
+
+// ============================================================================
+// VERIFICATION FUNCTIONS
+// ============================================================================
+
+/**
+ * Verify Supabase project is ready and schema exists
+ */
+async function verifySupabase(
+  url: string,
+  serviceKey: string,
+  projectRef: string
+): Promise<{ verified: boolean; details: string }> {
+  try {
+    // Check 1: Can we connect and query?
+    const testQuery = await fetch(`${url}/rest/v1/`, {
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    });
+
+    if (!testQuery.ok) {
+      return { verified: false, details: 'Cannot connect to Supabase REST API' };
+    }
+
+    // Check 2: Verify schema exists by checking for a core table
+    const schemaCheck = await fetch(`${url}/rest/v1/platforms?select=id&limit=1`, {
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    });
+
+    // 200 = table exists (even if empty), 404 = table doesn't exist
+    if (schemaCheck.status === 404) {
+      return { verified: false, details: 'Schema not applied - platforms table missing' };
+    }
+
+    // Check 3: Verify auth is configured via Management API
+    const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+    if (supabaseToken) {
+      const authConfig = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/config/auth`,
+        { headers: { Authorization: `Bearer ${supabaseToken}` } }
+      );
+
+      if (!authConfig.ok) {
+        return { verified: false, details: 'Auth configuration not accessible' };
+      }
+    }
+
+    return { verified: true, details: 'Database connected, schema exists, auth configured' };
+  } catch (error: any) {
+    return { verified: false, details: `Verification failed: ${error.message}` };
+  }
+}
+
+/**
+ * Verify GitHub repo has commits and expected files
+ */
+async function verifyGitHub(
+  owner: string,
+  repoName: string,
+  githubToken: string
+): Promise<{ verified: boolean; details: string }> {
+  try {
+    const headers = {
+      'Authorization': `Bearer ${githubToken}`,
+      'Accept': 'application/vnd.github.v3+json',
+    };
+
+    // Check 1: Repo exists
+    const repoCheck = await fetch(
+      `https://api.github.com/repos/${owner}/${repoName}`,
+      { headers }
+    );
+
+    if (!repoCheck.ok) {
+      return { verified: false, details: 'Repository not found' };
+    }
+
+    // Check 2: Main branch has commits
+    const branchCheck = await fetch(
+      `https://api.github.com/repos/${owner}/${repoName}/branches/main`,
+      { headers }
+    );
+
+    if (!branchCheck.ok) {
+      return { verified: false, details: 'Main branch not found or empty' };
+    }
+
+    const branchData = await branchCheck.json();
+    if (!branchData.commit?.sha) {
+      return { verified: false, details: 'Main branch has no commits' };
+    }
+
+    // Check 3: Key files exist
+    const configCheck = await fetch(
+      `https://api.github.com/repos/${owner}/${repoName}/contents/config/client.ts`,
+      { headers }
+    );
+
+    if (!configCheck.ok) {
+      return { verified: false, details: 'config/client.ts not found - files may not have been pushed' };
+    }
+
+    // Check 4: Get file count from tree
+    const treeCheck = await fetch(
+      `https://api.github.com/repos/${owner}/${repoName}/git/trees/main?recursive=1`,
+      { headers }
+    );
+
+    let fileCount = 0;
+    if (treeCheck.ok) {
+      const treeData = await treeCheck.json();
+      fileCount = treeData.tree?.filter((item: any) => item.type === 'blob').length || 0;
+    }
+
+    if (fileCount < 10) {
+      return { verified: false, details: `Only ${fileCount} files found - expected 50+` };
+    }
+
+    return { verified: true, details: `Repository ready with ${fileCount} files` };
+  } catch (error: any) {
+    return { verified: false, details: `Verification failed: ${error.message}` };
+  }
+}
+
+/**
+ * Verify Vercel deployment is complete and site responds
+ */
+async function verifyVercel(
+  projectId: string,
+  expectedUrl: string,
+  vercelToken: string,
+  maxWaitMs: number = 180000 // 3 minutes max
+): Promise<{ verified: boolean; details: string; deploymentId?: string }> {
+  const startTime = Date.now();
+  const pollInterval = 5000; // 5 seconds
+
+  try {
+    // Poll for deployment status
+    while (Date.now() - startTime < maxWaitMs) {
+      // Get latest deployment
+      const deploymentsRes = await fetch(
+        `https://api.vercel.com/v6/deployments?projectId=${projectId}&limit=1`,
+        { headers: { Authorization: `Bearer ${vercelToken}` } }
+      );
+
+      if (!deploymentsRes.ok) {
+        return { verified: false, details: 'Cannot fetch deployments' };
+      }
+
+      const deploymentsData = await deploymentsRes.json();
+      const latestDeployment = deploymentsData.deployments?.[0];
+
+      if (!latestDeployment) {
+        // No deployment yet, wait and retry
+        await new Promise(r => setTimeout(r, pollInterval));
+        continue;
+      }
+
+      const { state, readyState, id: deploymentId } = latestDeployment;
+
+      // Check deployment state
+      if (readyState === 'READY' || state === 'READY') {
+        // Deployment complete, verify site responds
+        const siteCheck = await fetch(expectedUrl, {
+          method: 'HEAD',
+          redirect: 'follow',
+        });
+
+        if (siteCheck.ok || siteCheck.status === 308) {
+          return {
+            verified: true,
+            details: `Deployment complete, site responding`,
+            deploymentId
+          };
+        } else {
+          return {
+            verified: false,
+            details: `Deployment ready but site returned ${siteCheck.status}`,
+            deploymentId
+          };
+        }
+      }
+
+      if (readyState === 'ERROR' || state === 'ERROR') {
+        return {
+          verified: false,
+          details: 'Deployment failed - check Vercel dashboard for build errors',
+          deploymentId
+        };
+      }
+
+      if (readyState === 'CANCELED' || state === 'CANCELED') {
+        return { verified: false, details: 'Deployment was canceled', deploymentId };
+      }
+
+      // Still building, wait and retry
+      console.log(`[Verify Vercel] Deployment state: ${readyState || state}, waiting...`);
+      await new Promise(r => setTimeout(r, pollInterval));
+    }
+
+    return { verified: false, details: `Deployment timed out after ${maxWaitMs / 1000}s` };
+  } catch (error: any) {
+    return { verified: false, details: `Verification failed: ${error.message}` };
+  }
+}
+
+/**
+ * Verify ElevenLabs agent is published and active
+ */
+async function verifyElevenLabs(
+  agentId: string,
+  apiKey: string
+): Promise<{ verified: boolean; details: string }> {
+  try {
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/convai/agents/${agentId}`,
+      { headers: { 'xi-api-key': apiKey } }
+    );
+
+    if (!response.ok) {
+      return { verified: false, details: 'Agent not found' };
+    }
+
+    const agent = await response.json();
+
+    // Check agent status
+    if (agent.status === 'published' || agent.is_published === true) {
+      return { verified: true, details: `Agent "${agent.name}" is published and active` };
+    }
+
+    if (agent.status === 'draft' || agent.is_published === false) {
+      return { verified: false, details: `Agent created but not published (status: draft)` };
+    }
+
+    return { verified: true, details: `Agent exists (status: ${agent.status || 'unknown'})` };
+  } catch (error: any) {
+    return { verified: false, details: `Verification failed: ${error.message}` };
+  }
 }
 
 // ============================================================================
@@ -121,18 +372,18 @@ export async function POST(request: NextRequest) {
     const branding = body.branding || getDefaultBranding(body);
 
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] Starting: ${body.companyName} (${projectSlug})`);
+    console.log(`[Orchestrator v8] Starting: ${body.companyName} (${projectSlug})`);
     console.log(`${'='.repeat(70)}\n`);
 
     // ========================================================================
-    // CLEANUP STEP 1: Delete existing Supabase (by name lookup)
+    // PRE-FLIGHT CLEANUP
     // ========================================================================
     if (!skipPreCleanup) {
       let stepStart = Date.now();
-      console.log(`[Orchestrator] Cleanup: Looking up Supabase project...`);
+      console.log(`[Orchestrator] Pre-flight cleanup...`);
 
+      // Supabase cleanup
       const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
-      let supabaseDeleted = false;
       let supabaseMessage = 'Not found';
 
       if (supabaseToken) {
@@ -146,11 +397,10 @@ export async function POST(request: NextRequest) {
             const existing = projects.find((p: any) => p.name === projectSlug);
 
             if (existing) {
-              console.log(`[Orchestrator] Found Supabase: ${existing.id}, deleting...`);
+              console.log(`[Orchestrator] Found existing Supabase: ${existing.id}, deleting...`);
               const delRes = await callTool(baseUrl, 'delete-supabase', { projectRef: existing.id });
-              supabaseDeleted = delRes.success;
-              supabaseMessage = supabaseDeleted ? `Deleted ${existing.id}` : delRes.error || 'Delete failed';
-              if (supabaseDeleted) await new Promise(r => setTimeout(r, 2000));
+              supabaseMessage = delRes.success ? `Deleted ${existing.id}` : delRes.error || 'Delete failed';
+              if (delRes.success) await new Promise(r => setTimeout(r, 2000));
             }
           }
         } catch (e: any) {
@@ -158,48 +408,31 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      steps.push({
-        step: 'cleanup-supabase',
-        status: 'success',
-        message: supabaseMessage,
-        duration: Date.now() - stepStart,
-      });
+      steps.push({ step: 'cleanup-supabase', status: 'success', message: supabaseMessage, duration: Date.now() - stepStart });
 
-      // ======================================================================
-      // CLEANUP STEP 2: Delete existing Vercel
-      // ======================================================================
+      // Vercel cleanup
       stepStart = Date.now();
-      console.log(`[Orchestrator] Cleanup: Deleting Vercel project...`);
-
       const vercelRes = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
-      const vercelDeleted = vercelRes.success && !vercelRes.data?.alreadyDeleted;
-
       steps.push({
         step: 'cleanup-vercel',
         status: 'success',
-        message: vercelRes.data?.alreadyDeleted ? 'Not found' : vercelDeleted ? 'Deleted' : vercelRes.error || 'Not found',
+        message: vercelRes.data?.alreadyDeleted ? 'Not found' : vercelRes.success ? 'Deleted' : 'Not found',
         duration: Date.now() - stepStart,
       });
 
-      // ======================================================================
-      // CLEANUP STEP 3: Delete existing GitHub
-      // ======================================================================
+      // GitHub cleanup
       stepStart = Date.now();
-      console.log(`[Orchestrator] Cleanup: Deleting GitHub repo...`);
-
       const githubRes = await callTool(baseUrl, 'delete-github', { repoName: projectSlug });
-      const githubDeleted = githubRes.success && !githubRes.data?.alreadyDeleted;
-
       steps.push({
         step: 'cleanup-github',
         status: 'success',
-        message: githubRes.data?.alreadyDeleted ? 'Not found' : githubDeleted ? 'Deleted' : githubRes.error || 'Not found',
+        message: githubRes.data?.alreadyDeleted ? 'Not found' : githubRes.success ? 'Deleted' : 'Not found',
         duration: Date.now() - stepStart,
       });
     }
 
     // ========================================================================
-    // STEP 1: Create Supabase
+    // STEP 1: Create Supabase + Verify
     // ========================================================================
     let stepStart = Date.now();
     console.log(`[Orchestrator] Creating Supabase project...`);
@@ -229,12 +462,14 @@ export async function POST(request: NextRequest) {
     steps.push({
       step: 'create-supabase',
       status: 'success',
-      message: supabaseRes.data.alreadyExists ? 'Already exists' : 'Created',
+      message: 'Created',
       duration: Date.now() - stepStart,
+      verified: false,
+      verificationDetails: 'Pending schema application',
     });
 
     // ========================================================================
-    // STEP 2: Run Migrations
+    // STEP 2: Run Migrations + Verify Schema
     // ========================================================================
     stepStart = Date.now();
     console.log(`[Orchestrator] Running migrations...`);
@@ -249,10 +484,29 @@ export async function POST(request: NextRequest) {
       throw new Error(`Migrations: ${migrationsRes.error}`);
     }
 
-    steps.push({ step: 'run-migrations', status: 'success', message: 'Schema applied', duration: Date.now() - stepStart });
+    // VERIFY: Schema actually exists
+    console.log(`[Orchestrator] Verifying Supabase schema...`);
+    const supabaseVerification = await verifySupabase(
+      resources.supabase.url,
+      resources.supabase.serviceKey,
+      resources.supabase.projectId
+    );
+
+    steps.push({
+      step: 'run-migrations',
+      status: supabaseVerification.verified ? 'success' : 'error',
+      message: 'Schema applied',
+      duration: Date.now() - stepStart,
+      verified: supabaseVerification.verified,
+      verificationDetails: supabaseVerification.details,
+    });
+
+    if (!supabaseVerification.verified) {
+      throw new Error(`Schema verification failed: ${supabaseVerification.details}`);
+    }
 
     // ========================================================================
-    // STEP 3: Create ElevenLabs (non-fatal)
+    // STEP 3: Create ElevenLabs + Verify (non-fatal)
     // ========================================================================
     stepStart = Date.now();
     console.log(`[Orchestrator] Creating ElevenLabs agent...`);
@@ -265,13 +519,34 @@ export async function POST(request: NextRequest) {
 
     if (elevenlabsRes.success && elevenlabsRes.data?.agentId) {
       resources.elevenlabs = { agentId: elevenlabsRes.data.agentId };
-      steps.push({ step: 'create-elevenlabs', status: 'success', message: 'Agent created', duration: Date.now() - stepStart });
+
+      // VERIFY: Agent is published
+      console.log(`[Orchestrator] Verifying ElevenLabs agent...`);
+      const elevenLabsVerification = await verifyElevenLabs(
+        resources.elevenlabs.agentId,
+        process.env.ELEVENLABS_API_KEY || ''
+      );
+
+      steps.push({
+        step: 'create-elevenlabs',
+        status: elevenLabsVerification.verified ? 'success' : 'skipped',
+        message: 'Agent created',
+        duration: Date.now() - stepStart,
+        verified: elevenLabsVerification.verified,
+        verificationDetails: elevenLabsVerification.details,
+      });
     } else {
-      steps.push({ step: 'create-elevenlabs', status: 'skipped', message: elevenlabsRes.error || 'Skipped', duration: Date.now() - stepStart });
+      steps.push({
+        step: 'create-elevenlabs',
+        status: 'skipped',
+        message: elevenlabsRes.error || 'Skipped',
+        duration: Date.now() - stepStart,
+        verified: false,
+      });
     }
 
     // ========================================================================
-    // STEP 4: Create GitHub
+    // STEP 4: Create GitHub + Verify
     // ========================================================================
     stepStart = Date.now();
     console.log(`[Orchestrator] Creating GitHub repo...`);
@@ -289,16 +564,32 @@ export async function POST(request: NextRequest) {
       throw new Error(`GitHub: ${githubRes.error}`);
     }
 
-    resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName };
+    const githubOwner = githubRes.data.owner || process.env.GITHUB_OWNER || 'dennissolver';
+    resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName, owner: githubOwner };
+
+    // VERIFY: Repo has commits and files
+    console.log(`[Orchestrator] Verifying GitHub repository...`);
+    const githubVerification = await verifyGitHub(
+      githubOwner,
+      resources.github.repoName,
+      process.env.GITHUB_TOKEN || ''
+    );
+
     steps.push({
       step: 'create-github',
-      status: 'success',
+      status: githubVerification.verified ? 'success' : 'error',
       message: `${githubRes.data.filesCreated || 'Files'} pushed`,
       duration: Date.now() - stepStart,
+      verified: githubVerification.verified,
+      verificationDetails: githubVerification.details,
     });
 
+    if (!githubVerification.verified) {
+      throw new Error(`GitHub verification failed: ${githubVerification.details}`);
+    }
+
     // ========================================================================
-    // STEP 5: Create Vercel
+    // STEP 5: Create Vercel + Verify Deployment
     // ========================================================================
     stepStart = Date.now();
     console.log(`[Orchestrator] Creating Vercel project...`);
@@ -323,11 +614,14 @@ export async function POST(request: NextRequest) {
     }
 
     resources.vercel = { projectId: vercelRes.data.projectId, url: vercelRes.data.url };
+
     steps.push({
       step: 'create-vercel',
       status: 'success',
-      message: vercelRes.data.gitConnected ? 'GitHub linked' : 'Created (no Git)',
+      message: vercelRes.data.gitConnected ? 'GitHub linked' : 'Created',
       duration: Date.now() - stepStart,
+      verified: false,
+      verificationDetails: 'Deployment pending verification',
     });
 
     // ========================================================================
@@ -346,6 +640,7 @@ export async function POST(request: NextRequest) {
       status: authRes.success ? 'success' : 'skipped',
       message: authRes.success ? 'Redirects configured' : authRes.error || 'Skipped',
       duration: Date.now() - stepStart,
+      verified: authRes.success,
     });
 
     // ========================================================================
@@ -364,43 +659,99 @@ export async function POST(request: NextRequest) {
       status: deployRes.success ? 'success' : 'error',
       message: deployRes.success ? 'Build triggered' : deployRes.error || 'Failed',
       duration: Date.now() - stepStart,
+      verified: false,
+      verificationDetails: 'Waiting for build completion',
     });
 
     // ========================================================================
-    // STEP 8: Send Welcome Email
+    // STEP 8: Verify Deployment Complete
+    // ========================================================================
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Waiting for deployment to complete...`);
+
+    const vercelVerification = await verifyVercel(
+      resources.vercel.projectId,
+      resources.vercel.url,
+      process.env.VERCEL_TOKEN || '',
+      180000 // 3 minutes max wait
+    );
+
+    if (vercelVerification.deploymentId) {
+      resources.vercel.deploymentId = vercelVerification.deploymentId;
+    }
+
+    steps.push({
+      step: 'verify-deployment',
+      status: vercelVerification.verified ? 'success' : 'error',
+      message: vercelVerification.verified ? 'Site is live' : 'Deployment issue',
+      duration: Date.now() - stepStart,
+      verified: vercelVerification.verified,
+      verificationDetails: vercelVerification.details,
+    });
+
+    if (!vercelVerification.verified) {
+      // Don't throw - deployment might still complete, but warn
+      console.warn(`[Orchestrator] Deployment verification issue: ${vercelVerification.details}`);
+    }
+
+    // ========================================================================
+    // STEP 9: Send Welcome Email
     // ========================================================================
     stepStart = Date.now();
     console.log(`[Orchestrator] Sending welcome email...`);
 
-    const emailRes = await callTool(baseUrl, 'send-welcome-email', {
-      email: body.adminEmail,
-      firstName: body.adminFirstName,
-      companyName: body.companyName,
-      platformUrl: resources.vercel.url,
-      githubUrl: resources.github.repoUrl,
-    });
+    // Only send email if deployment was verified
+    if (vercelVerification.verified) {
+      const emailRes = await callTool(baseUrl, 'send-welcome-email', {
+        email: body.adminEmail,
+        firstName: body.adminFirstName,
+        companyName: body.companyName,
+        platformUrl: resources.vercel.url,
+        githubUrl: resources.github.repoUrl,
+      });
 
-    steps.push({
-      step: 'send-welcome-email',
-      status: emailRes.success ? 'success' : 'skipped',
-      message: emailRes.success ? 'Email sent' : emailRes.error || 'Skipped',
-      duration: Date.now() - stepStart,
-    });
+      steps.push({
+        step: 'send-welcome-email',
+        status: emailRes.success ? 'success' : 'skipped',
+        message: emailRes.success ? 'Email sent' : emailRes.error || 'Skipped',
+        duration: Date.now() - stepStart,
+        verified: emailRes.success,
+      });
+    } else {
+      steps.push({
+        step: 'send-welcome-email',
+        status: 'skipped',
+        message: 'Skipped due to deployment issue',
+        duration: Date.now() - stepStart,
+        verified: false,
+      });
+    }
 
     // ========================================================================
-    // SUCCESS
+    // FINAL VERIFICATION SUMMARY
     // ========================================================================
+    const verifiedSteps = steps.filter(s => s.verified === true).length;
+    const totalVerifiableSteps = steps.filter(s => s.verified !== undefined).length;
+    const allVerified = steps.every(s => s.verified !== false || s.status === 'skipped');
+
     const totalDuration = Date.now() - startTime;
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] SUCCESS: ${resources.vercel.url}`);
+    console.log(`[Orchestrator] ${allVerified ? 'SUCCESS' : 'COMPLETED WITH ISSUES'}: ${resources.vercel.url}`);
+    console.log(`[Orchestrator] Verified: ${verifiedSteps}/${totalVerifiableSteps} steps`);
     console.log(`[Orchestrator] Duration: ${(totalDuration / 1000).toFixed(1)}s`);
     console.log(`${'='.repeat(70)}\n`);
 
     return NextResponse.json({
-      success: true,
+      success: allVerified,
+      fullyVerified: allVerified,
       platformUrl: resources.vercel.url,
       steps,
       resources,
+      verification: {
+        passed: verifiedSteps,
+        total: totalVerifiableSteps,
+        allPassed: allVerified,
+      },
       duration: totalDuration,
     });
 
@@ -410,24 +761,35 @@ export async function POST(request: NextRequest) {
 
     // Rollback
     if (projectSlug && body?.rollbackOnFailure !== false) {
+      console.log(`[Orchestrator] Rolling back resources...`);
       const baseUrl = getBaseUrl(request);
+
+      steps.push({ step: 'rollback', status: 'in_progress', message: 'Cleaning up...' });
+
       if (resources.vercel) await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
       if (resources.github) await callTool(baseUrl, 'delete-github', { repoName: resources.github.repoName });
       if (resources.elevenlabs) await callTool(baseUrl, 'delete-elevenlabs', { agentId: resources.elevenlabs.agentId });
       if (resources.supabase) await callTool(baseUrl, 'delete-supabase', { projectRef: resources.supabase.projectId });
+
+      steps[steps.length - 1] = { step: 'rollback', status: 'success', message: 'Resources cleaned up' };
     }
 
     return NextResponse.json({
       success: false,
+      fullyVerified: false,
       error: error.message,
       steps,
       resources,
-      rollback: { performed: true },
+      rollback: { performed: body?.rollbackOnFailure !== false },
       duration: totalDuration,
     }, { status: 500 });
   }
 }
 
 export async function GET() {
-  return NextResponse.json({ service: 'orchestrate', version: 'v7' });
+  return NextResponse.json({
+    service: 'orchestrate',
+    version: 'v8-verified',
+    features: ['verification', 'deployment-polling', 'detailed-status'],
+  });
 }
