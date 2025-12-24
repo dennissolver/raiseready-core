@@ -173,8 +173,8 @@ function generateClientConfig(branding: ExtractedBranding, admin: any, platformM
 // Generated: ${new Date().toISOString()}
 
 export const clientConfig = {
-  platformType: '${branding.platformType}' as const,
-  platformMode: '${platformMode}' as const,
+  platformType: '${branding.platformType}' as 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider',
+  platformMode: '${platformMode}' as 'screening' | 'coaching',
 
   company: {
     name: "${escapeString(branding.company.name)}",
@@ -229,7 +229,7 @@ export const clientConfig = {
   coaching: {
     coachName: "Maya",
     coachPersonality: "${escapeString(coachPersonalities[branding.platformType])}",
-    scoringFocus: "${scoringFocus}" as const,
+    scoringFocus: "${scoringFocus}" as 'storytelling' | 'impact' | 'growth',
   },
 
   features: ${JSON.stringify(features, null, 4)},
