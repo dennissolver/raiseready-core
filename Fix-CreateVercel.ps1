@@ -1,3 +1,9 @@
+# ============================================================================
+# FIX CREATE-VERCEL ROUTE
+# Run after Deploy-Routes.ps1
+# ============================================================================
+
+$createVercel = @'
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
@@ -76,3 +82,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+'@
+
+Set-Content -Path "app/api/setup/create-vercel/route.ts" -Value $createVercel
+Write-Host "Fixed: create-vercel/route.ts" -ForegroundColor Green
