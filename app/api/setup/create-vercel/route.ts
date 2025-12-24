@@ -1,3 +1,8 @@
+// app/api/setup/create-vercel/route.ts
+// ============================================================================
+// CREATE VERCEL PROJECT - Links to GitHub for auto-deploy
+// ============================================================================
+
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
@@ -38,41 +43,98 @@ export async function POST(request: NextRequest) {
     const safeName = projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/--+/g, '-').slice(0, 100);
     const teamQuery = vercelTeamId ? `?teamId=${vercelTeamId}` : '';
 
-    // Check if exists
+    console.log(`[CreateVercel] Creating project: ${safeName}`);
+    console.log(`[CreateVercel] GitHub repo: ${githubOwner}/${githubRepoName}`);
+    console.log(`[CreateVercel] Team ID: ${vercelTeamId}`);
+
+    // ========================================================================
+    // Check if project already exists
+    // ========================================================================
     const checkRes = await fetch(`https://api.vercel.com/v9/projects/${safeName}${teamQuery}`, {
       headers: { Authorization: `Bearer ${vercelToken}` },
     });
 
     if (checkRes.ok) {
       const existing = await checkRes.json();
-      return NextResponse.json({ success: true, projectId: existing.id, projectName: safeName, url: `https://${safeName}.vercel.app`, alreadyExists: true });
+      console.log(`[CreateVercel] Project already exists: ${existing.id}`);
+      return NextResponse.json({
+        success: true,
+        projectId: existing.id,
+        projectName: safeName,
+        url: `https://${safeName}.vercel.app`,
+        alreadyExists: true,
+      });
     }
 
-    // Create project
-    const environmentVariables = Object.entries(envVars).filter(([_, v]) => v).map(([key, value]) => ({
-      key, value, target: ['production', 'preview', 'development'],
-      type: key.includes('SECRET') || key.includes('SERVICE') || key.includes('API_KEY') ? 'encrypted' : 'plain',
-    }));
+    // ========================================================================
+    // Create project with GitHub connection
+    // ========================================================================
+    const environmentVariables = Object.entries(envVars)
+      .filter(([_, v]) => v)
+      .map(([key, value]) => ({
+        key,
+        value,
+        target: ['production', 'preview', 'development'],
+        type: key.includes('SECRET') || key.includes('SERVICE') || key.includes('API_KEY') ? 'encrypted' : 'plain',
+      }));
+
+    const createPayload = {
+      name: safeName,
+      framework: 'nextjs',
+      gitRepository: {
+        type: 'github',
+        repo: `${githubOwner}/${githubRepoName}`,
+      },
+      environmentVariables,
+    };
+
+    console.log(`[CreateVercel] Create payload:`, JSON.stringify(createPayload, null, 2));
 
     const createRes = await fetch(`https://api.vercel.com/v10/projects${teamQuery}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${vercelToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: safeName,
-        framework: 'nextjs',
-        gitRepository: { type: 'github', repo: `${githubOwner}/${githubRepoName}` },
-        environmentVariables,
-      }),
+      headers: {
+        Authorization: `Bearer ${vercelToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(createPayload),
     });
 
     if (!createRes.ok) {
       const error = await createRes.json();
-      return NextResponse.json({ error: error.error?.message || 'Failed to create' }, { status: 400 });
+      console.error(`[CreateVercel] Error:`, error);
+      return NextResponse.json(
+        { error: error.error?.message || 'Failed to create Vercel project' },
+        { status: 400 }
+      );
     }
 
     const project = await createRes.json();
-    return NextResponse.json({ success: true, projectId: project.id, projectName: safeName, url: `https://${safeName}.vercel.app` });
+    console.log(`[CreateVercel] Project created: ${project.id}`);
+    console.log(`[CreateVercel] Git linked: ${project.link?.type === 'github'}`);
+
+    return NextResponse.json({
+      success: true,
+      projectId: project.id,
+      projectName: safeName,
+      url: `https://${safeName}.vercel.app`,
+      gitConnected: !!project.link,
+    });
+
   } catch (error: any) {
+    console.error(`[CreateVercel] Exception:`, error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    service: 'create-vercel',
+    description: 'Creates a Vercel project linked to GitHub',
+    method: 'POST',
+    params: {
+      projectName: 'string (required)',
+      githubRepoName: 'string (required)',
+      envVars: 'object (optional)',
+    },
+  });
 }
