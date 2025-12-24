@@ -1,170 +1,116 @@
-/*
 // app/api/setup/trigger-deployment/route.ts
 // ============================================================================
-// TRIGGER DEPLOYMENT - Pushes a commit to GitHub to trigger Vercel auto-deploy
+// TRIGGER DEPLOYMENT - Calls Vercel API directly to create deployment
 //
-// This is a "dumb tool" - it does ONE thing:
-// 1. Pushes a trigger commit to the GitHub repo
-// 2. This triggers the Vercel webhook for auto-deployment
-// 3. Returns the commit SHA
-//
-// Why push a commit instead of calling Vercel API directly?
-// - Vercel auto-deploy is more reliable than manual deployment API
-// - Creates audit trail in git history
-// - Ensures Vercel has latest code
+// Don't rely on GitHub webhooks - they're async and unreliable for initial deploy
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const GITHUB_API = 'https://api.github.com';
-
 interface TriggerDeploymentRequest {
   repoName: string;
-  // Optional: custom commit message
+  projectName?: string; // Vercel project name (defaults to repoName)
   commitMessage?: string;
-  // Optional: branch to push to (defaults to main)
   branch?: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body: TriggerDeploymentRequest = await request.json();
-    const { repoName, commitMessage, branch = 'main' } = body;
+    const { repoName, projectName, branch = 'main' } = body;
 
     if (!repoName) {
-      return NextResponse.json(
-        { error: 'Repository name required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Repository name required' }, { status: 400 });
     }
 
     const githubToken = process.env.GITHUB_TOKEN;
     const githubOwner = process.env.GITHUB_OWNER || 'dennissolver';
+    const vercelToken = process.env.VERCEL_TOKEN;
+    const vercelTeamId = process.env.VERCEL_TEAM_ID;
 
     if (!githubToken) {
-      return NextResponse.json(
-        { error: 'GITHUB_TOKEN not configured' },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'GITHUB_TOKEN not configured' }, { status: 500 });
+    }
+    if (!vercelToken) {
+      return NextResponse.json({ error: 'VERCEL_TOKEN not configured' }, { status: 500 });
     }
 
-    const headers = {
-      Authorization: `Bearer ${githubToken}`,
-      Accept: 'application/vnd.github+json',
-      'Content-Type': 'application/json',
-    };
+    const vercelProjectName = projectName || repoName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const teamQuery = vercelTeamId ? `?teamId=${vercelTeamId}` : '';
+
+    console.log(`[TriggerDeployment] Project: ${vercelProjectName}`);
+    console.log(`[TriggerDeployment] Repo: ${githubOwner}/${repoName}`);
 
     // ========================================================================
-    // Step 1: Get the current commit SHA for the branch
+    // Step 1: Get latest commit SHA from GitHub
     // ========================================================================
-    console.log(`[TriggerDeployment] Getting current HEAD for ${githubOwner}/${repoName}@${branch}`);
+    console.log(`[TriggerDeployment] Getting latest commit...`);
 
     const refRes = await fetch(
-      `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/ref/heads/${branch}`,
-      { headers }
+      `https://api.github.com/repos/${githubOwner}/${repoName}/git/ref/heads/${branch}`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: 'application/vnd.github+json',
+        },
+      }
     );
 
     if (!refRes.ok) {
       const error = await refRes.json();
       return NextResponse.json(
-        { error: `Failed to get branch ref: ${error.message || 'Unknown error'}` },
+        { error: `Failed to get branch: ${error.message}` },
         { status: 400 }
       );
     }
 
     const refData = await refRes.json();
-    const currentCommitSha = refData.object.sha;
-    console.log(`[TriggerDeployment] Current commit: ${currentCommitSha}`);
+    const gitSha = refData.object.sha;
+    console.log(`[TriggerDeployment] Commit SHA: ${gitSha}`);
 
     // ========================================================================
-    // Step 2: Get the current commit to get the tree SHA
+    // Step 2: Create deployment via Vercel API
     // ========================================================================
-    const commitRes = await fetch(
-      `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/commits/${currentCommitSha}`,
-      { headers }
-    );
+    console.log(`[TriggerDeployment] Creating Vercel deployment...`);
 
-    if (!commitRes.ok) {
-      const error = await commitRes.json();
-      return NextResponse.json(
-        { error: `Failed to get commit: ${error.message || 'Unknown error'}` },
-        { status: 400 }
-      );
+    const deployRes = await fetch(`https://api.vercel.com/v13/deployments${teamQuery}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${vercelToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: vercelProjectName,
+        target: 'production',
+        gitSource: {
+          type: 'github',
+          org: githubOwner,
+          repo: repoName,
+          ref: branch,
+          sha: gitSha,
+        },
+      }),
+    });
+
+    if (!deployRes.ok) {
+      const error = await deployRes.json();
+      console.error(`[TriggerDeployment] Vercel API error:`, error);
+
+      // If deployment API fails, fall back to webhook method
+      console.log(`[TriggerDeployment] Falling back to webhook trigger...`);
+      return await triggerViaWebhook(githubToken, githubOwner, repoName, branch, body.commitMessage);
     }
 
-    const commitData = await commitRes.json();
-    const treeSha = commitData.tree.sha;
+    const deployment = await deployRes.json();
+    console.log(`[TriggerDeployment] Deployment created: ${deployment.id}`);
+    console.log(`[TriggerDeployment] URL: ${deployment.url}`);
 
-    // ========================================================================
-    // Step 3: Create a new commit with the same tree (empty commit)
-    // ========================================================================
-    const timestamp = new Date().toISOString();
-    const message = commitMessage || `Deploy: Trigger Vercel build [${timestamp}]`;
-
-    console.log(`[TriggerDeployment] Creating trigger commit...`);
-
-    const newCommitRes = await fetch(
-      `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/commits`,
-      {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          message,
-          tree: treeSha,
-          parents: [currentCommitSha],
-        }),
-      }
-    );
-
-    if (!newCommitRes.ok) {
-      const error = await newCommitRes.json();
-      return NextResponse.json(
-        { error: `Failed to create commit: ${error.message || 'Unknown error'}` },
-        { status: 400 }
-      );
-    }
-
-    const newCommit = await newCommitRes.json();
-    const newCommitSha = newCommit.sha;
-    console.log(`[TriggerDeployment] New commit created: ${newCommitSha}`);
-
-    // ========================================================================
-    // Step 4: Update the branch ref to point to new commit
-    // ========================================================================
-    console.log(`[TriggerDeployment] Updating branch ref...`);
-
-    const updateRefRes = await fetch(
-      `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/refs/heads/${branch}`,
-      {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          sha: newCommitSha,
-          force: false,
-        }),
-      }
-    );
-
-    if (!updateRefRes.ok) {
-      const error = await updateRefRes.json();
-      return NextResponse.json(
-        { error: `Failed to update ref: ${error.message || 'Unknown error'}` },
-        { status: 400 }
-      );
-    }
-
-    console.log(`[TriggerDeployment] Branch updated, Vercel webhook should trigger`);
-
-    // ========================================================================
-    // Return success
-    // ========================================================================
     return NextResponse.json({
       success: true,
-      commitSha: newCommitSha,
-      branch,
-      message,
-      repoUrl: `https://github.com/${githubOwner}/${repoName}`,
-      commitUrl: `https://github.com/${githubOwner}/${repoName}/commit/${newCommitSha}`,
+      deploymentId: deployment.id,
+      url: deployment.url,
+      inspectorUrl: deployment.inspectorUrl,
+      method: 'vercel-api',
     });
 
   } catch (error: any) {
@@ -177,212 +123,77 @@ export async function POST(request: NextRequest) {
 }
 
 // ============================================================================
-// GET - Health check
+// Fallback: Trigger via GitHub commit (webhook method)
 // ============================================================================
+
+async function triggerViaWebhook(
+  githubToken: string,
+  githubOwner: string,
+  repoName: string,
+  branch: string,
+  commitMessage?: string
+) {
+  const headers = {
+    Authorization: `Bearer ${githubToken}`,
+    Accept: 'application/vnd.github+json',
+    'Content-Type': 'application/json',
+  };
+
+  // Get current commit
+  const refRes = await fetch(
+    `https://api.github.com/repos/${githubOwner}/${repoName}/git/ref/heads/${branch}`,
+    { headers }
+  );
+
+  if (!refRes.ok) {
+    return NextResponse.json({ error: 'Failed to get branch ref' }, { status: 400 });
+  }
+
+  const refData = await refRes.json();
+  const currentSha = refData.object.sha;
+
+  // Get tree SHA
+  const commitRes = await fetch(
+    `https://api.github.com/repos/${githubOwner}/${repoName}/git/commits/${currentSha}`,
+    { headers }
+  );
+  const commitData = await commitRes.json();
+  const treeSha = commitData.tree.sha;
+
+  // Create empty commit
+  const message = commitMessage || `Deploy: Trigger build [${new Date().toISOString()}]`;
+  const newCommitRes = await fetch(
+    `https://api.github.com/repos/${githubOwner}/${repoName}/git/commits`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ message, tree: treeSha, parents: [currentSha] }),
+    }
+  );
+  const newCommit = await newCommitRes.json();
+
+  // Update branch ref
+  await fetch(
+    `https://api.github.com/repos/${githubOwner}/${repoName}/git/refs/heads/${branch}`,
+    {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ sha: newCommit.sha, force: false }),
+    }
+  );
+
+  console.log(`[TriggerDeployment] Webhook fallback: pushed ${newCommit.sha}`);
+
+  return NextResponse.json({
+    success: true,
+    commitSha: newCommit.sha,
+    method: 'webhook-fallback',
+  });
+}
 
 export async function GET() {
   return NextResponse.json({
     service: 'trigger-deployment',
-    description: 'Pushes a commit to GitHub to trigger Vercel auto-deploy',
-    method: 'POST',
-    params: {
-      repoName: 'string (required)',
-      commitMessage: 'string (optional)',
-      branch: 'string (optional, defaults to main)',
-    },
+    description: 'Triggers Vercel deployment via API (with webhook fallback)',
   });
-}*/
-
-// app/api/setup/trigger-deployment/route.ts
-// ============================================================================
-// TRIGGER DEPLOYMENT - Pushes a commit to GitHub to trigger Vercel auto-deploy
-//
-// This is a "dumb tool" - it does ONE thing:
-// 1. Pushes a trigger commit to the GitHub repo
-// 2. This triggers the Vercel webhook for auto-deployment
-// 3. Returns the commit SHA
-//
-// Why push a commit instead of calling Vercel API directly?
-// - Vercel auto-deploy is more reliable than manual deployment API
-// - Creates audit trail in git history
-// - Ensures Vercel has latest code
-// ============================================================================
-
-import {NextRequest, NextResponse} from 'next/server';
-
-const GITHUB_API = 'https://api.github.com';
-
-interface TriggerDeploymentRequest {
-    repoName: string;
-    // Optional: custom commit message
-    commitMessage?: string;
-    // Optional: branch to push to (defaults to main)
-    branch?: string;
-}
-
-export async function POST(request: NextRequest): Promise<NextResponse> {
-    try {
-        const body: TriggerDeploymentRequest = await request.json();
-        const {repoName, commitMessage, branch = 'main'} = body;
-
-        if (!repoName) {
-            return NextResponse.json(
-                {error: 'Repository name required'},
-                {status: 400}
-            );
-        }
-
-        const githubToken: string | undefined = process.env.GITHUB_TOKEN;
-        const githubOwner: string = process.env.GITHUB_OWNER || 'dennissolver';
-
-        if (!githubToken) {
-            return NextResponse.json(
-                {error: 'GITHUB_TOKEN not configured'},
-                {status: 500}
-            );
-        }
-
-        const headers = {
-            Authorization: `Bearer ${githubToken}`,
-            Accept: 'application/vnd.github+json',
-            'Content-Type': 'application/json',
-        };
-
-        // ========================================================================
-        // Step 1: Get the current commit SHA for the branch
-        // ========================================================================
-        console.log(`[TriggerDeployment] Getting current HEAD for ${githubOwner}/${repoName}@${branch}`);
-
-        const refRes = await fetch(
-            `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/ref/heads/${branch}`,
-            {headers}
-        );
-
-        if (!refRes.ok) {
-            const error = await refRes.json();
-            return NextResponse.json(
-                {error: `Failed to get branch ref: ${error.message || 'Unknown error'}`},
-                {status: 400}
-            );
-        }
-
-        const refData = await refRes.json();
-        const currentCommitSha: string = refData.object.sha;
-        console.log(`[TriggerDeployment] Current commit: ${currentCommitSha}`);
-
-        // ========================================================================
-        // Step 2: Get the current commit to get the tree SHA
-        // ========================================================================
-        const commitRes = await fetch(
-            `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/commits/${currentCommitSha}`,
-            {headers}
-        );
-
-        if (!commitRes.ok) {
-            const error = await commitRes.json();
-            return NextResponse.json(
-                {error: `Failed to get commit: ${error.message || 'Unknown error'}`},
-                {status: 400}
-            );
-        }
-
-        const commitData = await commitRes.json();
-        const treeSha: string = commitData.tree.sha;
-
-        // ========================================================================
-        // Step 3: Create a new commit with the same tree (empty commit)
-        // ========================================================================
-        const timestamp: string = new Date().toISOString();
-        const message: string = commitMessage || `Deploy: Trigger Vercel build [${timestamp}]`;
-
-        console.log(`[TriggerDeployment] Creating trigger commit...`);
-
-        const newCommitRes = await fetch(
-            `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/commits`,
-            {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    message,
-                    tree: treeSha,
-                    parents: [currentCommitSha],
-                }),
-            }
-        );
-
-        if (!newCommitRes.ok) {
-            const error = await newCommitRes.json();
-            return NextResponse.json(
-                {error: `Failed to create commit: ${error.message || 'Unknown error'}`},
-                {status: 400}
-            );
-        }
-
-        const newCommit = await newCommitRes.json();
-        const newCommitSha: string = newCommit.sha;
-        console.log(`[TriggerDeployment] New commit created: ${newCommitSha}`);
-
-        // ========================================================================
-        // Step 4: Update the branch ref to point to new commit
-        // ========================================================================
-        console.log(`[TriggerDeployment] Updating branch ref...`);
-
-        const updateRefRes = await fetch(
-            `${GITHUB_API}/repos/${githubOwner}/${repoName}/git/refs/heads/${branch}`,
-            {
-                method: 'PATCH',
-                headers,
-                body: JSON.stringify({
-                    sha: newCommitSha,
-                    force: false,
-                }),
-            }
-        );
-
-        if (!updateRefRes.ok) {
-            const error = await updateRefRes.json();
-            return NextResponse.json(
-                {error: `Failed to update ref: ${error.message || 'Unknown error'}`},
-                {status: 400}
-            );
-        }
-
-        console.log(`[TriggerDeployment] Branch updated, Vercel webhook should trigger`);
-
-        // ========================================================================
-        // Return success
-        // ========================================================================
-        return NextResponse.json({
-            success: true,
-            commitSha: newCommitSha,
-            branch,
-            message,
-            repoUrl: `https://github.com/${githubOwner}/${repoName}`,
-            commitUrl: `https://github.com/${githubOwner}/${repoName}/commit/${newCommitSha}`,
-        });
-
-    } catch (error: any) {
-        console.error('[TriggerDeployment] Error:', error);
-        return NextResponse.json(
-            {error: error.message || 'Failed to trigger deployment'},
-            {status: 500}
-        );
-    }
-}
-
-// ============================================================================
-// GET - Health check
-// ============================================================================
-
-export async function GET(): Promise<NextResponse> {
-    return NextResponse.json({
-        service: 'trigger-deployment',
-        description: 'Pushes a commit to GitHub to trigger Vercel auto-deploy',
-        method: 'POST',
-        params: {
-            repoName: 'string (required)',
-            commitMessage: 'string (optional)',
-            branch: 'string (optional, defaults to main)',
-        },
-    });
 }
