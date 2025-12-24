@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw } from 'lucide-react';
 
@@ -123,11 +123,19 @@ function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
   );
 }
 
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+    </div>
+  );
+}
+
 // ============================================================================
-// MAIN COMPONENT
+// MAIN SETUP CONTENT (uses useSearchParams)
 // ============================================================================
 
-export default function SetupPage() {
+function SetupContent() {
   const searchParams = useSearchParams();
   const platformType = (searchParams.get('type') as PlatformType) || 'commercial_investor';
 
@@ -172,24 +180,10 @@ export default function SetupPage() {
     }));
   };
 
-  // Simulate step progress while waiting for orchestrator
-  const simulateProgress = async () => {
-    for (let i = 0; i < INITIAL_STEPS.length; i++) {
-      await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
-      setSteps(prev => prev.map((step, idx) =>
-        idx === i ? { ...step, status: 'running' } :
-        idx < i ? { ...step, status: 'success' } : step
-      ));
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCurrentStep('creating');
     setSteps(INITIAL_STEPS.map((s, i) => ({ ...s, status: i === 0 ? 'running' : 'pending' })));
-
-    // Start progress simulation
-    const progressPromise = simulateProgress();
 
     try {
       const response = await fetch('/api/setup/orchestrate', {
@@ -488,5 +482,17 @@ export default function SetupPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// MAIN PAGE COMPONENT (wraps content in Suspense)
+// ============================================================================
+
+export default function SetupPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <SetupContent />
+    </Suspense>
   );
 }
