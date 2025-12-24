@@ -1,23 +1,8 @@
 // app/api/setup/orchestrate/route.ts
 // ============================================================================
-// PLATFORM CREATION ORCHESTRATOR v6
+// PLATFORM CREATION ORCHESTRATOR v7
 //
-// PATTERN: Smart orchestrator calling DUMB tools
-//
-// SEQUENCE:
-// ┌──────────────────────────────────────────────────────────────────────────┐
-// │  0. pre-cleanup        → Look up & delete existing resources             │
-// │  1. create-supabase    → Creates DB project                              │
-// │  2. run-migrations     → Applies schema + RLS + storage                  │
-// │  3. create-elevenlabs  → Creates voice agent                             │
-// │  4. create-github      → Creates repo from template                      │
-// │  5. create-vercel      → Creates project, links GitHub, sets env vars    │
-// │  6. configure-auth     → Sets Supabase redirect URLs                     │
-// │  7. trigger-deployment → Pushes commit → Vercel auto-deploys             │
-// │  8. send-welcome-email → Notifies admin                                  │
-// └──────────────────────────────────────────────────────────────────────────┘
-//
-// ON FAILURE: Automatically cleans up created resources.
+// Each step reported individually including cleanup steps
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -38,24 +23,16 @@ interface OrchestrationRequest {
   adminPhone?: string;
   agentName?: string;
   voiceGender?: 'female' | 'male';
-  branding?: ExtractedBranding;
+  branding?: any;
   platformMode?: 'screening' | 'coaching';
   rollbackOnFailure?: boolean;
   skipPreCleanup?: boolean;
 }
 
-interface ExtractedBranding {
-  company: { name: string; tagline: string; description: string; website: string };
-  colors: { primary: string; accent: string; background: string; text: string };
-  logo: { url: string | null; base64: string | null };
-  thesis: { focusAreas: string[]; sectors: string[]; stages: string[]; philosophy: string; idealFounder: string };
-  contact: { email: string | null; phone: string | null; linkedin: string | null };
-  platformType: PlatformType;
-}
-
 interface StepResult {
   step: string;
-  status: 'success' | 'error' | 'skipped' | 'rolled_back';
+  status: 'success' | 'error' | 'skipped';
+  message?: string;
   data?: any;
   error?: string;
   duration?: number;
@@ -95,33 +72,15 @@ async function callTool(
     });
     const data = await res.json();
     if (!res.ok || data.error) {
-      return { success: false, error: data.error || `${tool} failed` };
+      return { success: false, error: data.error || `${tool} failed`, data };
     }
     return { success: true, data };
   } catch (error: any) {
-    return { success: false, error: error.message || `${tool} failed` };
+    return { success: false, error: error.message };
   }
 }
 
-async function executeStep(
-  stepName: string,
-  executor: () => Promise<any>
-): Promise<StepResult> {
-  const startTime = Date.now();
-  try {
-    console.log(`[Orchestrator] >>> Starting: ${stepName}`);
-    const data = await executor();
-    const duration = Date.now() - startTime;
-    console.log(`[Orchestrator] <<< Completed: ${stepName} (${duration}ms)`);
-    return { step: stepName, status: 'success', data, duration };
-  } catch (error: any) {
-    const duration = Date.now() - startTime;
-    console.error(`[Orchestrator] !!! Failed: ${stepName}`, error.message);
-    return { step: stepName, status: 'error', error: error.message, duration };
-  }
-}
-
-function getDefaultBranding(body: OrchestrationRequest): ExtractedBranding {
+function getDefaultBranding(body: OrchestrationRequest): any {
   return {
     company: {
       name: body.companyName,
@@ -131,137 +90,10 @@ function getDefaultBranding(body: OrchestrationRequest): ExtractedBranding {
     },
     colors: { primary: '#8B5CF6', accent: '#10B981', background: '#0F172A', text: '#F8FAFC' },
     logo: { url: null, base64: null },
-    thesis: {
-      focusAreas: ['Technology', 'Innovation'],
-      sectors: ['Software', 'Fintech'],
-      stages: ['Pre-Seed', 'Seed', 'Series A'],
-      philosophy: 'We back exceptional founders.',
-      idealFounder: '',
-    },
+    thesis: { focusAreas: [], sectors: [], stages: [], philosophy: '', idealFounder: '' },
     contact: { email: body.companyEmail, phone: null, linkedin: null },
     platformType: 'commercial_investor',
   };
-}
-
-// ============================================================================
-// PRE-CLEANUP - Smart lookup, then call dumb delete tools
-// ============================================================================
-
-async function preCleanup(baseUrl: string, projectSlug: string): Promise<StepResult> {
-  const startTime = Date.now();
-  console.log(`[Orchestrator] >>> Pre-cleanup for slug: ${projectSlug}`);
-
-  const results: any = { supabase: null, vercel: null, github: null };
-
-  try {
-    const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
-
-    // ========================================================================
-    // 1. SUPABASE: Look up project by name, then call delete-supabase
-    // ========================================================================
-    if (supabaseToken) {
-      console.log(`[Orchestrator] Looking up Supabase project by name: ${projectSlug}`);
-
-      const listRes = await fetch('https://api.supabase.com/v1/projects', {
-        headers: {
-          Authorization: `Bearer ${supabaseToken}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (listRes.ok) {
-        const projects = await listRes.json();
-        const existing = projects.find((p: any) => p.name === projectSlug);
-
-        if (existing) {
-          console.log(`[Orchestrator] Found Supabase project: ${existing.id}, deleting...`);
-          const deleteRes = await callTool(baseUrl, 'delete-supabase', { projectRef: existing.id });
-          results.supabase = deleteRes;
-
-          if (deleteRes.success) {
-            console.log(`[Orchestrator] Deleted Supabase project: ${existing.id}`);
-            // Wait for deletion to propagate
-            await new Promise(r => setTimeout(r, 3000));
-          }
-        } else {
-          console.log(`[Orchestrator] No existing Supabase project found`);
-          results.supabase = { success: true, notFound: true };
-        }
-      }
-    }
-
-    // ========================================================================
-    // 2. VERCEL: Call delete-vercel with projectName
-    // ========================================================================
-    console.log(`[Orchestrator] Deleting Vercel project: ${projectSlug}`);
-    const vercelRes = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
-    results.vercel = vercelRes;
-    if (vercelRes.success) console.log(`[Orchestrator] Deleted Vercel project`);
-
-    // ========================================================================
-    // 3. GITHUB: Call delete-github with repoName
-    // ========================================================================
-    console.log(`[Orchestrator] Deleting GitHub repo: ${projectSlug}`);
-    const githubRes = await callTool(baseUrl, 'delete-github', { repoName: projectSlug });
-    results.github = githubRes;
-    if (githubRes.success) console.log(`[Orchestrator] Deleted GitHub repo`);
-
-    // ========================================================================
-    // Note: ElevenLabs agents have unique names per creation, no cleanup needed
-    // ========================================================================
-
-    const duration = Date.now() - startTime;
-    console.log(`[Orchestrator] <<< Pre-cleanup complete (${duration}ms)`);
-
-    return {
-      step: 'pre-cleanup',
-      status: 'success',
-      data: results,
-      duration,
-    };
-  } catch (error: any) {
-    console.error(`[Orchestrator] Pre-cleanup error (non-fatal):`, error.message);
-    return {
-      step: 'pre-cleanup',
-      status: 'success', // Non-fatal, continue anyway
-      data: { error: error.message, results },
-      duration: Date.now() - startTime,
-    };
-  }
-}
-
-// ============================================================================
-// ROLLBACK - Call dumb delete tools
-// ============================================================================
-
-async function rollbackResources(
-  baseUrl: string,
-  resources: Resources,
-  projectSlug: string
-): Promise<any> {
-  console.log(`\n[Orchestrator] !!! ROLLBACK INITIATED !!!`);
-
-  const results: any = {};
-
-  // Delete in reverse order of creation
-  if (resources.vercel) {
-    results.vercel = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
-  }
-
-  if (resources.github) {
-    results.github = await callTool(baseUrl, 'delete-github', { repoName: resources.github.repoName });
-  }
-
-  if (resources.elevenlabs) {
-    results.elevenlabs = await callTool(baseUrl, 'delete-elevenlabs', { agentId: resources.elevenlabs.agentId });
-  }
-
-  if (resources.supabase) {
-    results.supabase = await callTool(baseUrl, 'delete-supabase', { projectRef: resources.supabase.projectId });
-  }
-
-  console.log(`[Orchestrator] Rollback complete`);
-  return results;
 }
 
 // ============================================================================
@@ -271,234 +103,302 @@ async function rollbackResources(
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   const steps: StepResult[] = [];
-  const resources: Resources = {
-    supabase: null,
-    github: null,
-    vercel: null,
-    elevenlabs: null,
-  };
+  const resources: Resources = { supabase: null, github: null, vercel: null, elevenlabs: null };
 
-  let rollbackResult: any = null;
   let projectSlug = '';
   let body: OrchestrationRequest;
 
   try {
     body = await request.json();
     const baseUrl = getBaseUrl(request);
-    const rollbackOnFailure = body.rollbackOnFailure !== false;
     const skipPreCleanup = body.skipPreCleanup === true;
 
     if (!body.companyName || !body.companyEmail || !body.adminEmail) {
-      return NextResponse.json(
-        { error: 'companyName, companyEmail, and adminEmail required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'companyName, companyEmail, and adminEmail required' }, { status: 400 });
     }
 
     projectSlug = generateSlug(body.companyName);
-    console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] Starting platform creation for: ${body.companyName}`);
-    console.log(`[Orchestrator] Slug: ${projectSlug}`);
-    console.log(`${'='.repeat(70)}\n`);
-
     const branding = body.branding || getDefaultBranding(body);
 
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`[Orchestrator] Starting: ${body.companyName} (${projectSlug})`);
+    console.log(`${'='.repeat(70)}\n`);
+
     // ========================================================================
-    // STEP 0: Pre-cleanup (delete existing resources)
+    // CLEANUP STEP 1: Delete existing Supabase (by name lookup)
     // ========================================================================
     if (!skipPreCleanup) {
-      const cleanupResult = await preCleanup(baseUrl, projectSlug);
-      steps.push(cleanupResult);
+      let stepStart = Date.now();
+      console.log(`[Orchestrator] Cleanup: Looking up Supabase project...`);
+
+      const supabaseToken = process.env.SUPABASE_ACCESS_TOKEN;
+      let supabaseDeleted = false;
+      let supabaseMessage = 'Not found';
+
+      if (supabaseToken) {
+        try {
+          const listRes = await fetch('https://api.supabase.com/v1/projects', {
+            headers: { Authorization: `Bearer ${supabaseToken}` },
+          });
+
+          if (listRes.ok) {
+            const projects = await listRes.json();
+            const existing = projects.find((p: any) => p.name === projectSlug);
+
+            if (existing) {
+              console.log(`[Orchestrator] Found Supabase: ${existing.id}, deleting...`);
+              const delRes = await callTool(baseUrl, 'delete-supabase', { projectRef: existing.id });
+              supabaseDeleted = delRes.success;
+              supabaseMessage = supabaseDeleted ? `Deleted ${existing.id}` : delRes.error || 'Delete failed';
+              if (supabaseDeleted) await new Promise(r => setTimeout(r, 2000));
+            }
+          }
+        } catch (e: any) {
+          supabaseMessage = e.message;
+        }
+      }
+
+      steps.push({
+        step: 'cleanup-supabase',
+        status: 'success',
+        message: supabaseMessage,
+        duration: Date.now() - stepStart,
+      });
+
+      // ======================================================================
+      // CLEANUP STEP 2: Delete existing Vercel
+      // ======================================================================
+      stepStart = Date.now();
+      console.log(`[Orchestrator] Cleanup: Deleting Vercel project...`);
+
+      const vercelRes = await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
+      const vercelDeleted = vercelRes.success && !vercelRes.data?.alreadyDeleted;
+
+      steps.push({
+        step: 'cleanup-vercel',
+        status: 'success',
+        message: vercelRes.data?.alreadyDeleted ? 'Not found' : vercelDeleted ? 'Deleted' : vercelRes.error || 'Not found',
+        duration: Date.now() - stepStart,
+      });
+
+      // ======================================================================
+      // CLEANUP STEP 3: Delete existing GitHub
+      // ======================================================================
+      stepStart = Date.now();
+      console.log(`[Orchestrator] Cleanup: Deleting GitHub repo...`);
+
+      const githubRes = await callTool(baseUrl, 'delete-github', { repoName: projectSlug });
+      const githubDeleted = githubRes.success && !githubRes.data?.alreadyDeleted;
+
+      steps.push({
+        step: 'cleanup-github',
+        status: 'success',
+        message: githubRes.data?.alreadyDeleted ? 'Not found' : githubDeleted ? 'Deleted' : githubRes.error || 'Not found',
+        duration: Date.now() - stepStart,
+      });
     }
 
     // ========================================================================
     // STEP 1: Create Supabase
     // ========================================================================
-    const supabaseResult = await executeStep('create-supabase', async () => {
-      const result = await callTool(baseUrl, 'create-supabase', {
-        projectName: projectSlug,
-        organizationId: process.env.SUPABASE_ORG_ID,
-      });
-      if (!result.success) throw new Error(result.error);
-      return result.data;
-    });
-    steps.push(supabaseResult);
+    let stepStart = Date.now();
+    console.log(`[Orchestrator] Creating Supabase project...`);
 
-    if (supabaseResult.status === 'error') {
-      throw new Error(`Supabase failed: ${supabaseResult.error}`);
+    const supabaseRes = await callTool(baseUrl, 'create-supabase', {
+      projectName: projectSlug,
+      organizationId: process.env.SUPABASE_ORG_ID,
+    });
+
+    if (!supabaseRes.success) {
+      steps.push({ step: 'create-supabase', status: 'error', error: supabaseRes.error, duration: Date.now() - stepStart });
+      throw new Error(`Supabase: ${supabaseRes.error}`);
     }
-    // Handle both field name formats (projectId/projectRef, serviceKey/serviceRoleKey)
+
     resources.supabase = {
-      projectId: supabaseResult.data.projectRef || supabaseResult.data.projectId,
-      url: supabaseResult.data.url,
-      anonKey: supabaseResult.data.anonKey,
-      serviceKey: supabaseResult.data.serviceRoleKey || supabaseResult.data.serviceKey,
+      projectId: supabaseRes.data.projectRef || supabaseRes.data.projectId,
+      url: supabaseRes.data.url,
+      anonKey: supabaseRes.data.anonKey,
+      serviceKey: supabaseRes.data.serviceRoleKey || supabaseRes.data.serviceKey,
     };
 
-    // Validate we got the keys
     if (!resources.supabase.serviceKey) {
-      throw new Error('Supabase created but failed to retrieve service key');
+      steps.push({ step: 'create-supabase', status: 'error', error: 'No service key returned', duration: Date.now() - stepStart });
+      throw new Error('Supabase created but no service key');
     }
+
+    steps.push({
+      step: 'create-supabase',
+      status: 'success',
+      message: supabaseRes.data.alreadyExists ? 'Already exists' : 'Created',
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // STEP 2: Run Migrations
     // ========================================================================
-    const migrationsResult = await executeStep('run-migrations', async () => {
-      const result = await callTool(baseUrl, 'run-migrations', {
-        supabaseUrl: resources.supabase!.url,
-        supabaseServiceKey: resources.supabase!.serviceKey,
-      });
-      if (!result.success) throw new Error(result.error);
-      return result.data;
-    });
-    steps.push(migrationsResult);
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Running migrations...`);
 
-    if (migrationsResult.status === 'error') {
-      throw new Error(`Migrations failed: ${migrationsResult.error}`);
+    const migrationsRes = await callTool(baseUrl, 'run-migrations', {
+      supabaseUrl: resources.supabase.url,
+      supabaseServiceKey: resources.supabase.serviceKey,
+    });
+
+    if (!migrationsRes.success) {
+      steps.push({ step: 'run-migrations', status: 'error', error: migrationsRes.error, duration: Date.now() - stepStart });
+      throw new Error(`Migrations: ${migrationsRes.error}`);
     }
 
-    // ========================================================================
-    // STEP 3: Create ElevenLabs (optional, non-fatal)
-    // ========================================================================
-    const elevenlabsResult = await executeStep('create-elevenlabs', async () => {
-      const result = await callTool(baseUrl, 'create-elevenlabs', {
-        agentName: body.agentName || 'Maya',
-        voiceGender: body.voiceGender || 'female',
-        companyName: body.companyName,
-      });
-      if (!result.success) {
-        console.warn('[Orchestrator] ElevenLabs failed, continuing without voice');
-        return { agentId: '' };
-      }
-      return result.data;
-    });
-    steps.push(elevenlabsResult);
+    steps.push({ step: 'run-migrations', status: 'success', message: 'Schema applied', duration: Date.now() - stepStart });
 
-    if (elevenlabsResult.status === 'success' && elevenlabsResult.data?.agentId) {
-      resources.elevenlabs = { agentId: elevenlabsResult.data.agentId };
+    // ========================================================================
+    // STEP 3: Create ElevenLabs (non-fatal)
+    // ========================================================================
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Creating ElevenLabs agent...`);
+
+    const elevenlabsRes = await callTool(baseUrl, 'create-elevenlabs', {
+      agentName: body.agentName || 'Maya',
+      voiceGender: body.voiceGender || 'female',
+      companyName: body.companyName,
+    });
+
+    if (elevenlabsRes.success && elevenlabsRes.data?.agentId) {
+      resources.elevenlabs = { agentId: elevenlabsRes.data.agentId };
+      steps.push({ step: 'create-elevenlabs', status: 'success', message: 'Agent created', duration: Date.now() - stepStart });
+    } else {
+      steps.push({ step: 'create-elevenlabs', status: 'skipped', message: elevenlabsRes.error || 'Skipped', duration: Date.now() - stepStart });
     }
 
     // ========================================================================
     // STEP 4: Create GitHub
     // ========================================================================
-    const githubResult = await executeStep('create-github', async () => {
-      const result = await callTool(baseUrl, 'create-github', {
-        repoName: projectSlug,
-        branding,
-        companyName: body.companyName,
-        admin: {
-          firstName: body.adminFirstName,
-          lastName: body.adminLastName,
-          email: body.adminEmail,
-          phone: body.adminPhone,
-        },
-        platformMode: body.platformMode || 'screening',
-      });
-      if (!result.success) throw new Error(result.error);
-      return result.data;
-    });
-    steps.push(githubResult);
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Creating GitHub repo...`);
 
-    if (githubResult.status === 'error') {
-      throw new Error(`GitHub failed: ${githubResult.error}`);
+    const githubRes = await callTool(baseUrl, 'create-github', {
+      repoName: projectSlug,
+      branding,
+      companyName: body.companyName,
+      admin: { firstName: body.adminFirstName, lastName: body.adminLastName, email: body.adminEmail, phone: body.adminPhone },
+      platformMode: body.platformMode || 'screening',
+    });
+
+    if (!githubRes.success) {
+      steps.push({ step: 'create-github', status: 'error', error: githubRes.error, duration: Date.now() - stepStart });
+      throw new Error(`GitHub: ${githubRes.error}`);
     }
-    resources.github = {
-      repoUrl: githubResult.data.repoUrl,
-      repoName: githubResult.data.repoName,
-    };
+
+    resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName };
+    steps.push({
+      step: 'create-github',
+      status: 'success',
+      message: `${githubRes.data.filesCreated || 'Files'} pushed`,
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // STEP 5: Create Vercel
     // ========================================================================
-    const vercelResult = await executeStep('create-vercel', async () => {
-      const result = await callTool(baseUrl, 'create-vercel', {
-        projectName: projectSlug,
-        githubRepoName: resources.github!.repoName,
-        envVars: {
-          NEXT_PUBLIC_SUPABASE_URL: resources.supabase!.url,
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: resources.supabase!.anonKey,
-          SUPABASE_SERVICE_ROLE_KEY: resources.supabase!.serviceKey,
-          ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
-          ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
-          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
-          NEXT_PUBLIC_COMPANY_NAME: body.companyName,
-        },
-      });
-      if (!result.success) throw new Error(result.error);
-      return result.data;
-    });
-    steps.push(vercelResult);
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Creating Vercel project...`);
 
-    if (vercelResult.status === 'error') {
-      throw new Error(`Vercel failed: ${vercelResult.error}`);
+    const vercelRes = await callTool(baseUrl, 'create-vercel', {
+      projectName: projectSlug,
+      githubRepoName: resources.github.repoName,
+      envVars: {
+        NEXT_PUBLIC_SUPABASE_URL: resources.supabase.url,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: resources.supabase.anonKey,
+        SUPABASE_SERVICE_ROLE_KEY: resources.supabase.serviceKey,
+        ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
+        ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+        NEXT_PUBLIC_COMPANY_NAME: body.companyName,
+      },
+    });
+
+    if (!vercelRes.success) {
+      steps.push({ step: 'create-vercel', status: 'error', error: vercelRes.error, duration: Date.now() - stepStart });
+      throw new Error(`Vercel: ${vercelRes.error}`);
     }
-    resources.vercel = {
-      projectId: vercelResult.data.projectId,
-      url: vercelResult.data.url,
-    };
+
+    resources.vercel = { projectId: vercelRes.data.projectId, url: vercelRes.data.url };
+    steps.push({
+      step: 'create-vercel',
+      status: 'success',
+      message: vercelRes.data.gitConnected ? 'GitHub linked' : 'Created (no Git)',
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // STEP 6: Configure Supabase Auth
     // ========================================================================
-    const authResult = await executeStep('configure-auth', async () => {
-      const result = await callTool(baseUrl, 'configure-supabase-auth', {
-        projectRef: resources.supabase!.projectId,
-        siteUrl: resources.vercel!.url,
-        redirectUrls: [
-          `${resources.vercel!.url}/auth/callback`,
-          `${resources.vercel!.url}/callback`,
-          `${resources.vercel!.url}/login`,
-        ],
-      });
-      return result.success ? result.data : { configured: false };
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Configuring auth...`);
+
+    const authRes = await callTool(baseUrl, 'configure-supabase-auth', {
+      projectRef: resources.supabase.projectId,
+      siteUrl: resources.vercel.url,
     });
-    steps.push(authResult);
+
+    steps.push({
+      step: 'configure-auth',
+      status: authRes.success ? 'success' : 'skipped',
+      message: authRes.success ? 'Redirects configured' : authRes.error || 'Skipped',
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // STEP 7: Trigger Deployment
     // ========================================================================
-    const deployResult = await executeStep('trigger-deployment', async () => {
-      const result = await callTool(baseUrl, 'trigger-deployment', {
-        repoName: resources.github!.repoName,
-        commitMessage: `Initial deployment for ${body.companyName}`,
-      });
-      if (!result.success) throw new Error(result.error);
-      return result.data;
-    });
-    steps.push(deployResult);
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Triggering deployment...`);
 
-    if (deployResult.status === 'error') {
-      console.warn('[Orchestrator] Trigger deployment failed, Vercel may still auto-deploy');
-    }
+    const deployRes = await callTool(baseUrl, 'trigger-deployment', {
+      repoName: resources.github.repoName,
+      commitMessage: `Initial deployment for ${body.companyName}`,
+    });
+
+    steps.push({
+      step: 'trigger-deployment',
+      status: deployRes.success ? 'success' : 'error',
+      message: deployRes.success ? 'Build triggered' : deployRes.error || 'Failed',
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // STEP 8: Send Welcome Email
     // ========================================================================
-    const emailResult = await executeStep('send-welcome-email', async () => {
-      const result = await callTool(baseUrl, 'send-welcome-email', {
-        email: body.adminEmail,
-        firstName: body.adminFirstName,
-        companyName: body.companyName,
-        platformUrl: resources.vercel!.url,
-        githubUrl: resources.github!.repoUrl,
-      });
-      return result.success ? result.data : { sent: false };
+    stepStart = Date.now();
+    console.log(`[Orchestrator] Sending welcome email...`);
+
+    const emailRes = await callTool(baseUrl, 'send-welcome-email', {
+      email: body.adminEmail,
+      firstName: body.adminFirstName,
+      companyName: body.companyName,
+      platformUrl: resources.vercel.url,
+      githubUrl: resources.github.repoUrl,
     });
-    steps.push(emailResult);
+
+    steps.push({
+      step: 'send-welcome-email',
+      status: emailRes.success ? 'success' : 'skipped',
+      message: emailRes.success ? 'Email sent' : emailRes.error || 'Skipped',
+      duration: Date.now() - stepStart,
+    });
 
     // ========================================================================
     // SUCCESS
     // ========================================================================
     const totalDuration = Date.now() - startTime;
     console.log(`\n${'='.repeat(70)}`);
-    console.log(`[Orchestrator] SUCCESS!`);
-    console.log(`[Orchestrator] URL: ${resources.vercel?.url}`);
+    console.log(`[Orchestrator] SUCCESS: ${resources.vercel.url}`);
     console.log(`[Orchestrator] Duration: ${(totalDuration / 1000).toFixed(1)}s`);
     console.log(`${'='.repeat(70)}\n`);
 
     return NextResponse.json({
       success: true,
-      platformUrl: resources.vercel?.url || null,
+      platformUrl: resources.vercel.url,
       steps,
       resources,
       duration: totalDuration,
@@ -506,55 +406,28 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     const totalDuration = Date.now() - startTime;
-    console.error(`\n[Orchestrator] FATAL: ${error.message}`);
+    console.error(`[Orchestrator] FAILED: ${error.message}`);
 
-    const rollbackOnFailure = body!?.rollbackOnFailure !== false;
-
-    if (rollbackOnFailure && projectSlug) {
-      try {
-        const baseUrl = getBaseUrl(request);
-        rollbackResult = await rollbackResources(baseUrl, resources, projectSlug);
-      } catch (rollbackError: any) {
-        console.error(`[Orchestrator] Rollback failed: ${rollbackError.message}`);
-        rollbackResult = { performed: true, error: rollbackError.message };
-      }
+    // Rollback
+    if (projectSlug && body?.rollbackOnFailure !== false) {
+      const baseUrl = getBaseUrl(request);
+      if (resources.vercel) await callTool(baseUrl, 'delete-vercel', { projectName: projectSlug });
+      if (resources.github) await callTool(baseUrl, 'delete-github', { repoName: resources.github.repoName });
+      if (resources.elevenlabs) await callTool(baseUrl, 'delete-elevenlabs', { agentId: resources.elevenlabs.agentId });
+      if (resources.supabase) await callTool(baseUrl, 'delete-supabase', { projectRef: resources.supabase.projectId });
     }
 
-    return NextResponse.json(
-      {
-        success: false,
-        platformUrl: null,
-        steps,
-        resources,
-        rollback: rollbackResult ? { performed: true, results: rollbackResult } : { performed: false },
-        error: error.message,
-        duration: totalDuration,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({
+      success: false,
+      error: error.message,
+      steps,
+      resources,
+      rollback: { performed: true },
+      duration: totalDuration,
+    }, { status: 500 });
   }
 }
 
-// ============================================================================
-// GET - Documentation
-// ============================================================================
-
 export async function GET() {
-  return NextResponse.json({
-    service: 'orchestrate',
-    version: 'v6',
-    pattern: 'Smart orchestrator calling DUMB tools',
-    sequence: [
-      '0. pre-cleanup        → Look up by name, call delete tools',
-      '1. create-supabase    → Creates database project',
-      '2. run-migrations     → Applies schema + RLS + storage',
-      '3. create-elevenlabs  → Creates voice agent (optional)',
-      '4. create-github      → Creates repo with all platform files',
-      '5. create-vercel      → Links to GitHub, sets env vars',
-      '6. configure-auth     → Sets Supabase redirect URLs',
-      '7. trigger-deployment → Pushes commit to trigger Vercel build',
-      '8. send-welcome-email → Notifies admin',
-    ],
-    onFailure: 'Auto-rollback calls delete tools for created resources',
-  });
+  return NextResponse.json({ service: 'orchestrate', version: 'v7' });
 }
