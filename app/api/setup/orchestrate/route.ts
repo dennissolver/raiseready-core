@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // ============================================================================
 
 type PlatformType = 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
-type StepStatus = 'pending' | 'in_progress' | 'verifying' | 'success' | 'error' | 'skipped';
+type StepStatus = 'pending' | 'in_progress' | 'verifying' | 'success' | 'error' | 'skipped' | 'warning';
 
 interface OrchestrationRequest {
   companyName: string;
@@ -594,11 +594,17 @@ export async function POST(request: NextRequest) {
       throw new Error(`GitHub: ${githubRes.error}`);
     }
 
-    const githubOwner = githubRes.data.owner || process.env.GITHUB_OWNER || 'dennissolver';
-    resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName, owner: githubOwner };
+    // Log the full response to debug
+    console.log(`[Orchestrator] GitHub full response:`, JSON.stringify(githubRes.data, null, 2));
 
-    console.log(`[Orchestrator] GitHub response - owner: ${githubRes.data.owner}, repoName: ${githubRes.data.repoName}, repoUrl: ${githubRes.data.repoUrl}`);
-    console.log(`[Orchestrator] Using owner: ${githubOwner}, GITHUB_OWNER env: ${process.env.GITHUB_OWNER || 'not set'}`);
+    // Extract from response - fallback to known values if undefined
+    const githubOwner = githubRes.data?.owner || githubRes.data?.repoOwner || process.env.GITHUB_OWNER || 'dennissolver';
+    const githubRepoName = githubRes.data?.repoName || githubRes.data?.name || githubRes.data?.repo || projectSlug;
+    const githubRepoUrl = githubRes.data?.repoUrl || githubRes.data?.url || githubRes.data?.html_url || `https://github.com/${githubOwner}/${githubRepoName}`;
+
+    resources.github = { repoUrl: githubRepoUrl, repoName: githubRepoName, owner: githubOwner };
+
+    console.log(`[Orchestrator] GitHub resolved - owner: ${githubOwner}, repoName: ${githubRepoName}, repoUrl: ${githubRepoUrl}`);
 
     // VERIFY: Repo has commits and files (with retry for GitHub propagation delay)
     console.log(`[Orchestrator] Verifying GitHub repository...`);
@@ -612,7 +618,7 @@ export async function POST(request: NextRequest) {
 
       githubVerification = await verifyGitHub(
         githubOwner,
-        resources.github.repoName,
+        githubRepoName,
         process.env.GITHUB_TOKEN || ''
       );
 
