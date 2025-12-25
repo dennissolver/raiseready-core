@@ -144,6 +144,8 @@ async function verifyGitHub(
   githubToken: string
 ): Promise<{ verified: boolean; details: string }> {
   try {
+    console.log(`[verifyGitHub] Checking: ${owner}/${repoName}`);
+
     const headers = {
       'Authorization': `Bearer ${githubToken}`,
       'Accept': 'application/vnd.github.v3+json',
@@ -156,7 +158,9 @@ async function verifyGitHub(
     );
 
     if (!repoCheck.ok) {
-      return { verified: false, details: 'Repository not found' };
+      const errorText = await repoCheck.text();
+      console.log(`[verifyGitHub] Repo check failed: ${repoCheck.status} - ${errorText}`);
+      return { verified: false, details: `Repository not found (${repoCheck.status})` };
     }
 
     // Check 2: Main branch has commits
@@ -593,13 +597,28 @@ export async function POST(request: NextRequest) {
     const githubOwner = githubRes.data.owner || process.env.GITHUB_OWNER || 'dennissolver';
     resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName, owner: githubOwner };
 
-    // VERIFY: Repo has commits and files
+    // VERIFY: Repo has commits and files (with retry for GitHub propagation delay)
     console.log(`[Orchestrator] Verifying GitHub repository...`);
-    const githubVerification = await verifyGitHub(
-      githubOwner,
-      resources.github.repoName,
-      process.env.GITHUB_TOKEN || ''
-    );
+
+    let githubVerification = { verified: false, details: 'Not attempted' };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      // Wait before verification (GitHub needs time to propagate)
+      if (attempt > 1) {
+        console.log(`[Orchestrator] GitHub verification attempt ${attempt}/3, waiting 3s...`);
+        await new Promise(r => setTimeout(r, 3000));
+      } else {
+        // First attempt, wait 2 seconds
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      githubVerification = await verifyGitHub(
+        githubOwner,
+        resources.github.repoName,
+        process.env.GITHUB_TOKEN || ''
+      );
+
+      if (githubVerification.verified) break;
+    }
 
     steps.push({
       step: 'create-github',

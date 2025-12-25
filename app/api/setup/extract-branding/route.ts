@@ -105,6 +105,25 @@ async function analyzeWithVision(screenshotBase64: string, companyName: string, 
   }
 
   try {
+    // Detect image type from base64 data
+    // PNG starts with: iVBORw0KGgo (base64 of 0x89 0x50 0x4E 0x47)
+    // JPEG starts with: /9j/ (base64 of 0xFF 0xD8 0xFF)
+    // GIF starts with: R0lGOD (base64 of GIF89a or GIF87a)
+    // WebP starts with: UklGR (base64 of RIFF)
+    let mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' = 'image/png';
+
+    if (screenshotBase64.startsWith('/9j/')) {
+      mediaType = 'image/jpeg';
+    } else if (screenshotBase64.startsWith('iVBORw')) {
+      mediaType = 'image/png';
+    } else if (screenshotBase64.startsWith('R0lGOD')) {
+      mediaType = 'image/gif';
+    } else if (screenshotBase64.startsWith('UklGR')) {
+      mediaType = 'image/webp';
+    }
+
+    console.log(`[extract-branding] Detected image type: ${mediaType}`);
+
     const anthropic = new Anthropic({ apiKey: anthropicKey });
 
     const response = await anthropic.messages.create({
@@ -118,7 +137,7 @@ async function analyzeWithVision(screenshotBase64: string, companyName: string, 
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: 'image/jpeg',
+                media_type: mediaType,
                 data: screenshotBase64,
               },
             },
