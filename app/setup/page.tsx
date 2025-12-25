@@ -458,18 +458,39 @@ function SetupContent() {
       const response = await fetch('/api/setup/extract-branding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ websiteUrl: formData.companyWebsite }),
+        body: JSON.stringify({
+          companyWebsite: formData.companyWebsite,
+          companyName: formData.companyName,
+        }),
       });
 
       const data = await response.json();
 
       if (data.success && data.branding) {
+        // Construct full branding object from API response + form data
+        const extractedColors = data.branding.colors || {};
+        const fullBranding: ExtractedBranding = {
+          company: {
+            name: formData.companyName,
+            tagline: data.branding.description || 'AI-Powered Pitch Coaching',
+            description: data.branding.description || '',
+            website: formData.companyWebsite
+          },
+          colors: {
+            primary: extractedColors.primary || '#8B5CF6',
+            accent: extractedColors.accent || '#10B981',
+            background: extractedColors.background || '#0F172A',
+            text: extractedColors.text || '#F8FAFC'
+          },
+          logo: { url: null, base64: null },
+          thesis: { focusAreas: [], sectors: [], philosophy: data.branding.description || '' },
+          contact: { email: formData.companyEmail, phone: null, linkedin: null },
+          platformType: formData.platformType,
+        };
+
         setFormData(prev => ({
           ...prev,
-          companyName: data.branding.company.name || prev.companyName,
-          companyEmail: data.branding.contact?.email || prev.companyEmail,
-          platformType: data.branding.platformType || prev.platformType,
-          branding: data.branding,
+          branding: fullBranding,
         }));
         setCurrentStep('review');
       } else {
@@ -575,6 +596,14 @@ function SetupContent() {
 
   if (currentStep === 'review' && formData.branding) {
     const { branding } = formData;
+
+    // Ensure branding has required structure (defensive check)
+    if (!branding.company || !branding.colors) {
+      // Redirect back to form if branding is incomplete
+      setCurrentStep('form');
+      return null;
+    }
+
     return (
       <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
         <div className="max-w-2xl mx-auto">
