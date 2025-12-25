@@ -16,9 +16,13 @@ export async function POST(request: NextRequest) {
     const companyName = body.companyName || body.company || 'Your Company';
     const githubUrl = body.githubUrl || body.repoUrl;
 
+    // Normalize platformUrl - remove protocol if already present
+    let cleanPlatformUrl = platformUrl.replace(/^https?:\/\//, '');
+
     console.log('[send-welcome-email] Received:', {
       adminEmail: adminEmail ? '✓' : '✗',
       platformUrl: platformUrl ? '✓' : '✗',
+      cleanPlatformUrl,
       firstName,
       companyName
     });
@@ -73,7 +77,7 @@ export async function POST(request: NextRequest) {
 
       <!-- Access Button -->
       <div style="text-align: center; margin-bottom: 32px;">
-        <a href="https://${platformUrl}" style="display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; font-size: 16px; font-weight: 600; text-decoration: none; padding: 14px 32px; border-radius: 8px;">
+        <a href="https://${cleanPlatformUrl}" style="display: inline-block; background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; font-size: 16px; font-weight: 600; text-decoration: none; padding: 14px 32px; border-radius: 8px;">
           Access Your Platform →
         </a>
       </div>
@@ -85,7 +89,7 @@ export async function POST(request: NextRequest) {
           <tr>
             <td style="color: #71717a; font-size: 14px; padding: 8px 0; border-bottom: 1px solid #e4e4e7;">Platform URL</td>
             <td style="color: #18181b; font-size: 14px; padding: 8px 0; border-bottom: 1px solid #e4e4e7; text-align: right;">
-              <a href="https://${platformUrl}" style="color: #2563eb; text-decoration: none;">${platformUrl}</a>
+              <a href="https://${cleanPlatformUrl}" style="color: #2563eb; text-decoration: none;">${cleanPlatformUrl}</a>
             </td>
           </tr>
           ${githubUrl ? `
