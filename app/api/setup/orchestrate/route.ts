@@ -78,8 +78,8 @@ async function verifySupabase(
     }
 
     // Check 2: Verify schema exists by checking for core tables
-    // Schema creates: user_roles, founder_profiles, pitch_decks, coaching_sessions
-    const schemaCheck = await fetch(`${url}/rest/v1/founder_profiles?select=id&limit=1`, {
+    // Full schema creates: founders, pitch_decks, coaching_sessions, etc.
+    const foundersCheck = await fetch(`${url}/rest/v1/founders?select=id&limit=1`, {
       headers: {
         'apikey': serviceKey,
         'Authorization': `Bearer ${serviceKey}`,
@@ -87,20 +87,32 @@ async function verifySupabase(
     });
 
     // 200 = table exists (even if empty), 404 = table doesn't exist
-    if (schemaCheck.status === 404) {
-      return { verified: false, details: 'Schema not applied - founder_profiles table missing' };
+    if (foundersCheck.status === 404) {
+      return { verified: false, details: 'Schema not applied - founders table missing' };
     }
 
-    // Also verify user_roles table exists
-    const rolesCheck = await fetch(`${url}/rest/v1/user_roles?select=id&limit=1`, {
+    // Also verify pitch_decks table exists
+    const decksCheck = await fetch(`${url}/rest/v1/pitch_decks?select=id&limit=1`, {
       headers: {
         'apikey': serviceKey,
         'Authorization': `Bearer ${serviceKey}`,
       },
     });
 
-    if (rolesCheck.status === 404) {
-      return { verified: false, details: 'Schema partially applied - user_roles table missing' };
+    if (decksCheck.status === 404) {
+      return { verified: false, details: 'Schema partially applied - pitch_decks table missing' };
+    }
+
+    // Also verify superadmins table exists
+    const adminsCheck = await fetch(`${url}/rest/v1/superadmins?select=id&limit=1`, {
+      headers: {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+      },
+    });
+
+    if (adminsCheck.status === 404) {
+      return { verified: false, details: 'Schema partially applied - superadmins table missing' };
     }
 
     // Check 3: Verify auth is configured via Management API
