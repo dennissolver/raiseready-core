@@ -29,6 +29,7 @@ interface OrchestrationRequest {
   agentName?: string;
   voiceGender?: 'female' | 'male';
   branding?: any;
+  platformType?: 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
   platformMode?: 'screening' | 'coaching';
   rollbackOnFailure?: boolean;
   skipPreCleanup?: boolean;
@@ -623,13 +624,35 @@ export async function POST(request: NextRequest) {
       projectName: projectSlug,
       githubRepoName: resources.github.repoName,
       envVars: {
+        // Supabase
         NEXT_PUBLIC_SUPABASE_URL: resources.supabase.url,
         NEXT_PUBLIC_SUPABASE_ANON_KEY: resources.supabase.anonKey,
         SUPABASE_SERVICE_ROLE_KEY: resources.supabase.serviceKey,
+
+        // ElevenLabs Voice
         ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
         ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
+
+        // AI
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+
+        // Platform Identity
         NEXT_PUBLIC_COMPANY_NAME: body.companyName,
+        NEXT_PUBLIC_TAGLINE: branding?.description || 'AI-Powered Pitch Coaching',
+        NEXT_PUBLIC_DESCRIPTION: branding?.description || '',
+        NEXT_PUBLIC_WEBSITE_URL: body.companyWebsite || '',
+
+        // Platform Type (controls features)
+        NEXT_PUBLIC_PLATFORM_TYPE: body.platformType || 'founder_service_provider',
+
+        // Branding Colors
+        NEXT_PUBLIC_COLOR_PRIMARY: branding?.colors?.primary || '#2563eb',
+        NEXT_PUBLIC_COLOR_ACCENT: branding?.colors?.accent || '#10b981',
+        NEXT_PUBLIC_COLOR_BACKGROUND: branding?.colors?.background || '#0f172a',
+        NEXT_PUBLIC_COLOR_TEXT: branding?.colors?.text || '#f8fafc',
+
+        // Admin Access
+        ADMIN_EMAILS: body.adminEmail,
       },
     });
 

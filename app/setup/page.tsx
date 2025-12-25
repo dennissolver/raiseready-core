@@ -11,7 +11,7 @@ import {
 // TYPES
 // ============================================================================
 
-type PlatformType = 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider';
+type PlatformType = 'founder_service_provider' | 'impact_investor' | 'commercial_investor' | 'family_office';
 type StepStatus = 'pending' | 'running' | 'verifying' | 'success' | 'error' | 'skipped' | 'warning';
 
 interface Step {
@@ -295,7 +295,7 @@ function LoadingFallback() {
 
 function SetupContent() {
   const searchParams = useSearchParams();
-  const platformType = (searchParams.get('type') as PlatformType) || 'commercial_investor';
+  const platformType = (searchParams.get('type') as PlatformType) || 'founder_service_provider';
 
   const [currentStep, setCurrentStep] = useState<'form' | 'extracting' | 'review' | 'creating' | 'success' | 'error'>('form');
   const [steps, setSteps] = useState<Step[]>(getInitialSteps());
@@ -317,10 +317,10 @@ function SetupContent() {
   });
 
   const platformLabels: Record<PlatformType, string> = {
-    impact_investor: 'Impact Investor Platform',
-    commercial_investor: 'Commercial Investor Platform',
-    family_office: 'Family Office Platform',
-    founder_service_provider: 'Founder Service Provider Platform',
+    'founder_service_provider': 'Founder Services (No Investor Portal)',
+    'impact_investor': 'Impact Investors & Founders',
+    'commercial_investor': 'Commercial Investors (VCs, Angels, PE)',
+    'family_office': 'Family Offices (Patient Capital)',
   };
 
   // ============================================================================
@@ -543,6 +543,7 @@ function SetupContent() {
           adminPhone: formData.adminPhone,
           agentName: formData.agentName,
           voiceGender: formData.voiceGender,
+          platformType: formData.platformType,
           platformMode: 'screening',
           branding: formData.branding,
         }),
@@ -724,6 +725,25 @@ function SetupContent() {
                   className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="contact@acmeventures.com"
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Platform Type *</label>
+                <select
+                  value={formData.platformType}
+                  onChange={e => setFormData(prev => ({ ...prev, platformType: e.target.value as PlatformType }))}
+                  className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="founder_service_provider">Founder Services (No Investor Portal)</option>
+                  <option value="impact_investor">Impact Investors & Founders</option>
+                  <option value="commercial_investor">Commercial Investors (VCs, Angels, PE)</option>
+                  <option value="family_office">Family Offices (Patient Capital)</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  {formData.platformType === 'founder_service_provider' && 'For service providers like Lionheart - founders only, no investor matching'}
+                  {formData.platformType === 'impact_investor' && 'For impact-focused funds - includes SDG tracking and impact returns'}
+                  {formData.platformType === 'commercial_investor' && 'For VCs, angels, and PE - traditional fundraising metrics'}
+                  {formData.platformType === 'family_office' && 'For family offices - patient capital, long-term focus'}
+                </p>
               </div>
             </div>
 

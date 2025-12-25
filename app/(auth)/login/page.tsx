@@ -1,89 +1,122 @@
+// app/(auth)/login/page.tsx
+// ============================================================================
+// LOGIN PAGE - Single login for all users, redirect based on role
+// ============================================================================
+
 'use client';
 
-import { clientConfig } from '@/config';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
-import { createClient } from '@/lib/supabase/client';
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import {
+  clientConfig,
+  isServiceProvider,
+  isImpactInvestor,
+  isFamilyOffice,
+  hasInvestorMatching,
+  isAdminEmail
+} from '@/config';
 
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // Determine platform type
-  const isServiceProvider = clientConfig.platformMode === 'coaching';
-  const isImpactInvestor = clientConfig.platformType === 'impact_investor';
-  const isFamilyOffice = clientConfig.platformType === 'family_office';
+  // Background gradient based on platform type
+  const getBgGradient = () => {
+    if (isServiceProvider()) {
+      return 'from-amber-50 to-orange-100';
+    }
+    if (isImpactInvestor()) {
+      return 'from-green-50 to-emerald-100';
+    }
+    if (isFamilyOffice()) {
+      return 'from-blue-50 to-indigo-100';
+    }
+    return 'from-purple-50 to-violet-100';
+  };
 
+  const getBannerColors = () => {
+    if (isServiceProvider()) {
+      return 'bg-amber-50 border-amber-200 text-amber-900';
+    }
+    if (isImpactInvestor()) {
+      return 'bg-green-50 border-green-200 text-green-900';
+    }
+    if (isFamilyOffice()) {
+      return 'bg-blue-50 border-blue-200 text-blue-900';
+    }
+    return 'bg-purple-50 border-purple-200 text-purple-900';
+  };
+
+  // Get theme colors
+  const primaryColor = clientConfig.theme?.colors?.primary || '#8B5CF6';
+  const accentColor = clientConfig.theme?.colors?.accent || '#10B981';
+
+  // Handle auth state changes
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        // Check user role and redirect appropriately
-        const { data: founderData } = await (supabase as any)
+      if (event === 'SIGNED_IN' && session?.user?.email) {
+        const email = session.user.email;
+
+        // Check if admin
+        if (isAdminEmail(email)) {
+          router.push('/admin');
+          router.refresh();
+          return;
+        }
+
+        // Check if founder
+        const { data: founder } = await supabase
           .from('founders')
           .select('id')
-          .eq('id', session.user.id)
+          .eq('email', email)
           .single();
 
-        const { data: investorData } = await (supabase as any)
-          .from('investor_profiles')
-          .select('id')
-          .eq('id', session.user.id)
-          .single();
-
-        if (founderData) {
+        if (founder) {
           router.push('/founder/dashboard');
-        } else if (investorData) {
-          router.push('/portal/dashboard');
-        } else {
-          // Default to founder signup flow
-          router.push('/signup/founder');
+          router.refresh();
+          return;
         }
+
+        // Check if investor (only if investor matching enabled)
+        if (hasInvestorMatching()) {
+          const { data: investor } = await supabase
+            .from('investor_profiles')
+            .select('id')
+            .eq('email', email)
+            .single();
+
+          if (investor) {
+            router.push('/investor/dashboard');
+            router.refresh();
+            return;
+          }
+        }
+
+        // Default to founder dashboard (they may need to complete profile)
+        router.push('/founder/dashboard');
         router.refresh();
       }
     });
     return () => subscription.unsubscribe();
   }, [router, supabase]);
 
-  // Get theme colors from config
-  const primaryColor = clientConfig.theme?.colors?.primary || 'hsl(262, 83%, 58%)';
-  const accentColor = clientConfig.theme?.colors?.accent || 'hsl(262, 83%, 45%)';
-
-  // Background gradient based on platform type
-  const getBgGradient = () => {
-    if (isServiceProvider) {
-      return 'from-slate-900 to-slate-800';
-    }
-    if (isImpactInvestor) {
-      return 'from-emerald-900 to-slate-900';
-    }
-    if (isFamilyOffice) {
-      return 'from-indigo-900 to-slate-900';
-    }
-    return 'from-purple-900 to-slate-900';
-  };
-
-  const getWelcomeText = () => {
-    if (isServiceProvider) {
-      return 'Access your pitch coaching portal';
-    }
-    if (isImpactInvestor) {
-      return 'Access your impact investing portal';
-    }
-    if (isFamilyOffice) {
-      return 'Access your family office portal';
-    }
-    return 'Access your investor portal';
-  };
-
   return (
     <div className={`min-h-screen flex items-center justify-center bg-gradient-to-br ${getBgGradient()}`}>
       <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-lg">
-        {/* Logo/Company Name */}
+        {/* Welcome Banner */}
+        <div className={`mb-6 p-4 border rounded-lg ${getBannerColors()}`}>
+          <p className="text-sm">
+            <strong>{clientConfig.company.name}</strong>
+          </p>
+        </div>
+
+        {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold mb-2">{clientConfig.company.name}</h1>
-          <p className="text-muted-foreground">{getWelcomeText()}</p>
+          <h1 className="text-3xl font-bold mb-2">Welcome Back</h1>
+          <p className="text-gray-600">Sign in to continue</p>
         </div>
 
         {/* Auth Form */}
@@ -102,21 +135,13 @@ export default function LoginPage() {
           }}
           view="sign_in"
           providers={[]}
+          redirectTo={typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined}
         />
 
-        {/* Footer - only show signup link if not service provider admin portal */}
-        <div className="mt-6 text-center text-sm text-muted-foreground">
-          {isServiceProvider ? (
-            <>
-              Are you a founder client?{' '}
-              <a href="/signup/founder" className="text-primary hover:underline">Create account</a>
-            </>
-          ) : (
-            <>
-              New founder?{' '}
-              <a href="/signup/founder" className="text-primary hover:underline">Submit your pitch</a>
-            </>
-          )}
+        {/* Footer */}
+        <div className="mt-6 text-center text-sm text-gray-600">
+          Don't have an account?{' '}
+          <a href="/signup" className="text-purple-600 font-medium hover:underline">Sign up</a>
         </div>
       </div>
     </div>

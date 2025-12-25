@@ -47,4 +47,10 @@ export const hasValuesScoring = () =>
 export const hasClientPortfolio = () =>
   isServiceProvider() || (clientConfig.platform?.features as any)?.clientPortfolio;
 
+// Admin email check
+export const isAdminEmail = (email: string): boolean => {
+  const adminEmail = clientConfig.admin?.email?.toLowerCase();
+  return adminEmail ? email.toLowerCase() === adminEmail : false;
+};
+
 export type { ClientConfig } from './client';
