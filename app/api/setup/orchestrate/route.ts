@@ -597,25 +597,26 @@ export async function POST(request: NextRequest) {
     const githubOwner = githubRes.data.owner || process.env.GITHUB_OWNER || 'dennissolver';
     resources.github = { repoUrl: githubRes.data.repoUrl, repoName: githubRes.data.repoName, owner: githubOwner };
 
+    console.log(`[Orchestrator] GitHub response - owner: ${githubRes.data.owner}, repoName: ${githubRes.data.repoName}, repoUrl: ${githubRes.data.repoUrl}`);
+    console.log(`[Orchestrator] Using owner: ${githubOwner}, GITHUB_OWNER env: ${process.env.GITHUB_OWNER || 'not set'}`);
+
     // VERIFY: Repo has commits and files (with retry for GitHub propagation delay)
     console.log(`[Orchestrator] Verifying GitHub repository...`);
 
     let githubVerification = { verified: false, details: 'Not attempted' };
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       // Wait before verification (GitHub needs time to propagate)
-      if (attempt > 1) {
-        console.log(`[Orchestrator] GitHub verification attempt ${attempt}/3, waiting 3s...`);
-        await new Promise(r => setTimeout(r, 3000));
-      } else {
-        // First attempt, wait 2 seconds
-        await new Promise(r => setTimeout(r, 2000));
-      }
+      const waitTime = attempt === 1 ? 3000 : 5000; // 3s first, then 5s
+      console.log(`[Orchestrator] GitHub verification attempt ${attempt}/5, waiting ${waitTime/1000}s...`);
+      await new Promise(r => setTimeout(r, waitTime));
 
       githubVerification = await verifyGitHub(
         githubOwner,
         resources.github.repoName,
         process.env.GITHUB_TOKEN || ''
       );
+
+      console.log(`[Orchestrator] Verification result: ${githubVerification.verified ? 'SUCCESS' : 'FAILED'} - ${githubVerification.details}`);
 
       if (githubVerification.verified) break;
     }
