@@ -39,31 +39,54 @@ async function captureScreenshot(url: string): Promise<string | null> {
     }
 
     // Option 2: Use microlink.io (generous free tier)
-    const microlinkUrl = `https://api.microlink.io/?url=${encodeURIComponent(normalizedUrl)}&screenshot=true&meta=false&embed=screenshot.url`;
-    const microlinkResponse = await fetch(microlinkUrl);
+    try {
+      // Don't use embed - we want the JSON response with screenshot URL
+      const microlinkUrl = `https://api.microlink.io/?url=${encodeURIComponent(normalizedUrl)}&screenshot=true&meta=false`;
+      const microlinkResponse = await fetch(microlinkUrl, {
+        signal: AbortSignal.timeout(20000)
+      });
 
-    if (microlinkResponse.ok) {
-      const data = await microlinkResponse.json();
-      if (data.status === 'success' && data.data?.screenshot?.url) {
-        // Fetch the actual screenshot image
-        const imageResponse = await fetch(data.data.screenshot.url);
-        if (imageResponse.ok) {
-          const buffer = await imageResponse.arrayBuffer();
-          return Buffer.from(buffer).toString('base64');
+      // Check content-type before parsing
+      const contentType = microlinkResponse.headers.get('content-type') || '';
+
+      if (microlinkResponse.ok && contentType.includes('application/json')) {
+        const data = await microlinkResponse.json();
+        if (data.status === 'success' && data.data?.screenshot?.url) {
+          console.log('[extract-branding] Microlink returned screenshot URL:', data.data.screenshot.url);
+          // Fetch the actual screenshot image
+          const imageResponse = await fetch(data.data.screenshot.url, {
+            signal: AbortSignal.timeout(10000)
+          });
+          if (imageResponse.ok) {
+            const buffer = await imageResponse.arrayBuffer();
+            return Buffer.from(buffer).toString('base64');
+          }
         }
+      } else if (microlinkResponse.ok && contentType.includes('image')) {
+        // If it returned image directly, use it
+        console.log('[extract-branding] Microlink returned image directly');
+        const buffer = await microlinkResponse.arrayBuffer();
+        return Buffer.from(buffer).toString('base64');
       }
+    } catch (microlinkError) {
+      console.log('[extract-branding] Microlink failed:', microlinkError);
     }
 
     // Option 3: Use thum.io (free, no API key needed)
-    const thumUrl = `https://image.thum.io/get/width/1280/crop/800/https://${normalizedUrl.replace(/^https?:\/\//, '')}`;
-    const thumResponse = await fetch(thumUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      signal: AbortSignal.timeout(15000)
-    });
+    try {
+      const thumUrl = `https://image.thum.io/get/width/1280/crop/800/https://${normalizedUrl.replace(/^https?:\/\//, '')}`;
+      console.log('[extract-branding] Trying thum.io...');
+      const thumResponse = await fetch(thumUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        signal: AbortSignal.timeout(15000)
+      });
 
-    if (thumResponse.ok) {
-      const buffer = await thumResponse.arrayBuffer();
-      return Buffer.from(buffer).toString('base64');
+      if (thumResponse.ok) {
+        const buffer = await thumResponse.arrayBuffer();
+        return Buffer.from(buffer).toString('base64');
+      }
+    } catch (thumError) {
+      console.log('[extract-branding] Thum.io failed:', thumError);
     }
 
     return null;

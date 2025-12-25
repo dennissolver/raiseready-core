@@ -638,21 +638,34 @@ export async function POST(request: NextRequest) {
 
         // Platform Identity
         NEXT_PUBLIC_COMPANY_NAME: body.companyName,
-        NEXT_PUBLIC_TAGLINE: branding?.description || 'AI-Powered Pitch Coaching',
+        NEXT_PUBLIC_TAGLINE: branding?.tagline || branding?.description || 'AI-Powered Pitch Coaching',
         NEXT_PUBLIC_DESCRIPTION: branding?.description || '',
         NEXT_PUBLIC_WEBSITE_URL: body.companyWebsite || '',
+        NEXT_PUBLIC_PLATFORM_URL: `https://${projectSlug}.vercel.app`,
+        NEXT_PUBLIC_SUPABASE_PROJECT_ID: resources.supabase.projectId,
 
         // Platform Type (controls features)
         NEXT_PUBLIC_PLATFORM_TYPE: body.platformType || 'founder_service_provider',
+        NEXT_PUBLIC_PLATFORM_MODE: body.platformMode || 'screening',
 
         // Branding Colors
         NEXT_PUBLIC_COLOR_PRIMARY: branding?.colors?.primary || '#2563eb',
         NEXT_PUBLIC_COLOR_ACCENT: branding?.colors?.accent || '#10b981',
         NEXT_PUBLIC_COLOR_BACKGROUND: branding?.colors?.background || '#0f172a',
         NEXT_PUBLIC_COLOR_TEXT: branding?.colors?.text || '#f8fafc',
+        NEXT_PUBLIC_COLOR_SURFACE: branding?.colors?.surface || '#1e293b',
+        NEXT_PUBLIC_COLOR_TEXT_MUTED: branding?.colors?.textMuted || '#94a3b8',
+        NEXT_PUBLIC_COLOR_BORDER: branding?.colors?.border || '#334155',
 
-        // Admin Access
-        ADMIN_EMAILS: body.adminEmail,
+        // Admin
+        ADMIN_EMAIL: body.adminEmail,
+        NEXT_PUBLIC_ADMIN_FIRST_NAME: body.adminFirstName,
+        NEXT_PUBLIC_ADMIN_LAST_NAME: body.adminLastName,
+        NEXT_PUBLIC_ADMIN_PHONE: body.adminPhone || '',
+        NEXT_PUBLIC_SUPPORT_EMAIL: body.companyEmail,
+
+        // Coach
+        NEXT_PUBLIC_COACH_NAME: body.agentName || 'Maya',
       },
     });
 
