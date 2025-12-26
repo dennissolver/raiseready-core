@@ -4,7 +4,8 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   CheckCircle, Circle, Loader2, XCircle, ExternalLink, RotateCcw,
-  Sparkles, Globe, Trash2, MinusCircle, AlertCircle, ShieldCheck
+  Sparkles, Globe, Trash2, MinusCircle, AlertCircle, ShieldCheck,
+  Database, Github, Mic, Clock, RefreshCw, ArrowRight
 } from 'lucide-react';
 
 // ============================================================================
@@ -12,19 +13,26 @@ import {
 // ============================================================================
 
 type PlatformType = 'founder_service_provider' | 'impact_investor' | 'commercial_investor' | 'family_office';
-type StepStatus = 'pending' | 'running' | 'verifying' | 'success' | 'error' | 'skipped' | 'warning';
+type CleanupStatus = 'pending' | 'deleting' | 'testing' | 'verified' | 'not_found' | 'error';
+type CreateStatus = 'pending' | 'creating' | 'verifying' | 'ready' | 'warning' | 'error' | 'skipped';
 
-interface Step {
+interface CleanupComponent {
   id: string;
-  label: string;
-  description: string;
-  status: StepStatus;
+  name: string;
+  icon: any;
+  status: CleanupStatus;
   message?: string;
-  error?: string;
+  attempts?: number;
+}
+
+interface CreateStep {
+  id: string;
+  name: string;
+  icon: any;
+  status: CreateStatus;
+  message?: string;
   duration?: number;
-  isCleanup?: boolean;
   verified?: boolean;
-  verificationDetails?: string;
 }
 
 interface ExtractedBranding {
@@ -52,7 +60,6 @@ interface FormData {
 
 interface OrchestrationResult {
   success: boolean;
-  fullyVerified?: boolean;
   platformUrl: string | null;
   steps: Array<{
     step: string;
@@ -61,7 +68,6 @@ interface OrchestrationResult {
     error?: string;
     duration?: number;
     verified?: boolean;
-    verificationDetails?: string;
   }>;
   resources: {
     supabase: { projectId: string; url: string } | null;
@@ -69,208 +75,243 @@ interface OrchestrationResult {
     vercel: { projectId: string; url: string } | null;
     elevenlabs: { agentId: string } | null;
   };
-  verification?: {
-    passed: number;
-    total: number;
-    allPassed: boolean;
-  };
-  rollback?: { performed: boolean };
   error?: string;
   duration?: number;
 }
 
 // ============================================================================
-// STEP DEFINITIONS
+// INITIAL STATE
 // ============================================================================
 
-const STEP_CONFIG: Record<string, { label: string; description: string; isCleanup?: boolean }> = {
-  'cleanup-supabase': { label: 'Checking Supabase', description: 'Looking for existing project...', isCleanup: true },
-  'cleanup-vercel': { label: 'Checking Vercel', description: 'Looking for existing deployment...', isCleanup: true },
-  'cleanup-github': { label: 'Checking GitHub', description: 'Looking for existing repository...', isCleanup: true },
-  'create-supabase': { label: 'Creating Supabase', description: 'Setting up database...' },
-  'run-migrations': { label: 'Applying schema', description: 'Creating tables and policies...' },
-  'create-elevenlabs': { label: 'Creating voice agent', description: 'Setting up AI coaching...' },
-  'create-github': { label: 'Creating repository', description: 'Pushing platform code...' },
-  'create-vercel': { label: 'Creating deployment', description: 'Configuring hosting...' },
-  'configure-auth': { label: 'Configuring auth', description: 'Setting up login...' },
-  'trigger-deployment': { label: 'Deploying platform', description: 'Building your site...' },
-  'verify-deployment': { label: 'Verifying deployment', description: 'Confirming site is live...' },
-  'send-welcome-email': { label: 'Sending welcome email', description: 'Notifying admin...' },
-  'rollback': { label: 'Rolling back', description: 'Cleaning up resources...', isCleanup: true },
-};
-
-const STEP_ORDER = [
-  'cleanup-supabase', 'cleanup-vercel', 'cleanup-github',
-  'create-supabase', 'run-migrations', 'create-elevenlabs',
-  'create-github', 'create-vercel', 'configure-auth',
-  'trigger-deployment', 'verify-deployment', 'send-welcome-email',
+const getInitialCleanupComponents = (): CleanupComponent[] => [
+  { id: 'supabase', name: 'Supabase Database', icon: Database, status: 'pending' },
+  { id: 'github', name: 'GitHub Repository', icon: Github, status: 'pending' },
+  { id: 'vercel', name: 'Vercel Project', icon: Globe, status: 'pending' },
+  { id: 'elevenlabs', name: 'ElevenLabs Agent', icon: Mic, status: 'pending' },
 ];
 
-function getInitialSteps(): Step[] {
-  return STEP_ORDER.map(id => ({
-    id,
-    label: STEP_CONFIG[id]?.label || id,
-    description: STEP_CONFIG[id]?.description || '',
-    status: 'pending' as StepStatus,
-    isCleanup: STEP_CONFIG[id]?.isCleanup,
-  }));
-}
+const getInitialCreateSteps = (): CreateStep[] => [
+  { id: 'supabase', name: 'Create Supabase Database', icon: Database, status: 'pending' },
+  { id: 'elevenlabs', name: 'Create Voice Agent', icon: Mic, status: 'pending' },
+  { id: 'github', name: 'Create GitHub Repository', icon: Github, status: 'pending' },
+  { id: 'vercel', name: 'Create Vercel Project', icon: Globe, status: 'pending' },
+  { id: 'auth', name: 'Configure Authentication', icon: ShieldCheck, status: 'pending' },
+  { id: 'deploy', name: 'Deploy & Verify', icon: Sparkles, status: 'pending' },
+];
 
 // ============================================================================
-// STATUS COLOR HELPERS
+// STATUS COMPONENTS
 // ============================================================================
 
-function getStatusColor(status: StepStatus, verified?: boolean, isCleanup?: boolean): {
-  icon: string;
-  text: string;
-  line: string;
-  bg: string;
-} {
-  // Cleanup steps use orange palette
-  if (isCleanup) {
-    switch (status) {
-      case 'success':
-        return { icon: 'text-orange-400', text: 'text-orange-300', line: 'bg-orange-500/50', bg: 'bg-orange-500/10' };
-      case 'running':
-        return { icon: 'text-orange-400', text: 'text-orange-300', line: 'bg-orange-500/30', bg: 'bg-orange-500/10' };
-      default:
-        return { icon: 'text-gray-600', text: 'text-gray-400', line: 'bg-gray-700', bg: 'bg-transparent' };
-    }
-  }
-
-  // Main creation steps
+function CleanupStatusIcon({ status }: { status: CleanupStatus }) {
   switch (status) {
     case 'pending':
-      return { icon: 'text-gray-600', text: 'text-gray-400', line: 'bg-gray-700', bg: 'bg-transparent' };
-    case 'running':
-      return { icon: 'text-orange-500', text: 'text-orange-400', line: 'bg-orange-500/30', bg: 'bg-orange-500/10' };
-    case 'verifying':
-      return { icon: 'text-yellow-500', text: 'text-yellow-400', line: 'bg-yellow-500/30', bg: 'bg-yellow-500/10' };
-    case 'success':
-      // Only green if verified, otherwise orange/yellow
-      if (verified === true) {
-        return { icon: 'text-green-500', text: 'text-green-400', line: 'bg-green-500/50', bg: 'bg-green-500/10' };
-      } else if (verified === false) {
-        return { icon: 'text-yellow-500', text: 'text-yellow-400', line: 'bg-yellow-500/50', bg: 'bg-yellow-500/10' };
-      }
-      // No verification field means old behavior - show green
-      return { icon: 'text-green-500', text: 'text-green-400', line: 'bg-green-500/50', bg: 'bg-green-500/10' };
-    case 'warning':
-      return { icon: 'text-yellow-500', text: 'text-yellow-400', line: 'bg-yellow-500/50', bg: 'bg-yellow-500/10' };
+      return <Clock className="w-5 h-5 text-gray-500" />;
+    case 'deleting':
+      return <Trash2 className="w-5 h-5 text-orange-500 animate-pulse" />;
+    case 'testing':
+      return <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />;
+    case 'verified':
+    case 'not_found':
+      return <CheckCircle className="w-5 h-5 text-green-500" />;
     case 'error':
-      return { icon: 'text-red-500', text: 'text-red-400', line: 'bg-red-500/50', bg: 'bg-red-500/10' };
-    case 'skipped':
-      return { icon: 'text-gray-500', text: 'text-gray-500', line: 'bg-gray-700', bg: 'bg-transparent' };
-    default:
-      return { icon: 'text-gray-600', text: 'text-gray-400', line: 'bg-gray-700', bg: 'bg-transparent' };
+      return <XCircle className="w-5 h-5 text-red-500" />;
   }
 }
 
-// ============================================================================
-// COMPONENTS
-// ============================================================================
-
-function StepIcon({ status, verified, isCleanup }: { status: StepStatus; verified?: boolean; isCleanup?: boolean }) {
-  const size = isCleanup ? 'w-4 h-4' : 'w-5 h-5';
-  const colors = getStatusColor(status, verified, isCleanup);
-
+function CreateStatusIcon({ status }: { status: CreateStatus }) {
   switch (status) {
-    case 'success':
-      if (verified === true) {
-        return <ShieldCheck className={`${size} ${colors.icon}`} />;
-      } else if (verified === false) {
-        return <AlertCircle className={`${size} ${colors.icon}`} />;
-      }
-      return <CheckCircle className={`${size} ${colors.icon}`} />;
-    case 'error':
-      return <XCircle className={`${size} ${colors.icon}`} />;
-    case 'running':
+    case 'pending':
+      return <Clock className="w-5 h-5 text-gray-500" />;
+    case 'creating':
+      return <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />;
     case 'verifying':
-      return <Loader2 className={`${size} ${colors.icon} animate-spin`} />;
-    case 'skipped':
-      return <MinusCircle className={`${size} ${colors.icon}`} />;
+      return <RefreshCw className="w-5 h-5 text-purple-500 animate-spin" />;
+    case 'ready':
+      return <CheckCircle className="w-5 h-5 text-green-500" />;
     case 'warning':
-      return <AlertCircle className={`${size} ${colors.icon}`} />;
-    default:
-      return <Circle className={`${size} ${colors.icon}`} />;
+      return <AlertCircle className="w-5 h-5 text-yellow-500" />;
+    case 'error':
+      return <XCircle className="w-5 h-5 text-red-500" />;
+    case 'skipped':
+      return <MinusCircle className="w-5 h-5 text-gray-500" />;
   }
 }
 
-function StepItem({ step, isLast }: { step: Step; isLast: boolean }) {
-  const isCleanup = step.isCleanup;
-  const colors = getStatusColor(step.status, step.verified, isCleanup);
-
-  // Dynamic description based on state
-  let displayDescription = step.description;
-  if (step.status === 'success' && step.verificationDetails) {
-    displayDescription = step.verificationDetails;
-  } else if (step.message) {
-    displayDescription = step.message;
-  } else if (step.error) {
-    displayDescription = step.error;
+function getCleanupStatusText(status: CleanupStatus): string {
+  switch (status) {
+    case 'pending': return 'Waiting...';
+    case 'deleting': return 'Deleting...';
+    case 'testing': return 'Verifying deletion...';
+    case 'verified': return 'Verified deleted';
+    case 'not_found': return 'Not found (clean)';
+    case 'error': return 'Error';
   }
+}
+
+function getCreateStatusText(status: CreateStatus): string {
+  switch (status) {
+    case 'pending': return 'Waiting...';
+    case 'creating': return 'Creating...';
+    case 'verifying': return 'Verifying...';
+    case 'ready': return 'Ready ✓';
+    case 'warning': return 'Warning';
+    case 'error': return 'Error';
+    case 'skipped': return 'Skipped';
+  }
+}
+
+function getCleanupStatusColor(status: CleanupStatus): string {
+  switch (status) {
+    case 'pending': return 'border-gray-700 bg-gray-900/50';
+    case 'deleting': return 'border-orange-500/50 bg-orange-500/10';
+    case 'testing': return 'border-blue-500/50 bg-blue-500/10';
+    case 'verified':
+    case 'not_found': return 'border-green-500/50 bg-green-500/10';
+    case 'error': return 'border-red-500/50 bg-red-500/10';
+  }
+}
+
+function getCreateStatusColor(status: CreateStatus): string {
+  switch (status) {
+    case 'pending': return 'border-gray-700 bg-gray-900/50';
+    case 'creating': return 'border-blue-500/50 bg-blue-500/10';
+    case 'verifying': return 'border-purple-500/50 bg-purple-500/10';
+    case 'ready': return 'border-green-500/50 bg-green-500/10';
+    case 'warning': return 'border-yellow-500/50 bg-yellow-500/10';
+    case 'error': return 'border-red-500/50 bg-red-500/10';
+    case 'skipped': return 'border-gray-700 bg-gray-900/50';
+  }
+}
+
+// ============================================================================
+// CLEANUP COMPONENT ROW
+// ============================================================================
+
+function CleanupComponentRow({ component }: { component: CleanupComponent }) {
+  const Icon = component.icon;
+  const statusColor = getCleanupStatusColor(component.status);
+  const statusText = getCleanupStatusText(component.status);
+  const isActive = ['deleting', 'testing'].includes(component.status);
+  const isDone = ['verified', 'not_found'].includes(component.status);
 
   return (
-    <div className={`flex gap-3 ${isCleanup ? 'opacity-90' : ''}`}>
-      <div className="flex flex-col items-center">
-        <StepIcon status={step.status} verified={step.verified} isCleanup={isCleanup} />
-        {!isLast && (
-          <div className={`w-0.5 flex-1 min-h-[24px] mt-1 ${colors.line}`} />
+    <div className={`flex items-center gap-4 p-4 rounded-lg border transition-all duration-300 ${statusColor}`}>
+      <div className={`p-2 rounded-lg ${isDone ? 'bg-green-500/20' : isActive ? 'bg-orange-500/20' : 'bg-gray-800'}`}>
+        <Icon className={`w-5 h-5 ${isDone ? 'text-green-400' : isActive ? 'text-orange-400' : 'text-gray-400'}`} />
+      </div>
+
+      <div className="flex-1">
+        <div className="font-medium text-white">{component.name}</div>
+        <div className={`text-sm ${isDone ? 'text-green-400' : isActive ? 'text-orange-400' : 'text-gray-500'}`}>
+          {component.message || statusText}
+          {component.attempts && component.attempts > 1 && ` (${component.attempts} attempts)`}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <CleanupStatusIcon status={component.status} />
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// CREATE STEP ROW
+// ============================================================================
+
+function CreateStepRow({ step, disabled }: { step: CreateStep; disabled: boolean }) {
+  const Icon = step.icon;
+  const statusColor = disabled ? 'border-gray-800 bg-gray-900/30 opacity-50' : getCreateStatusColor(step.status);
+  const statusText = getCreateStatusText(step.status);
+  const isActive = ['creating', 'verifying'].includes(step.status);
+  const isDone = step.status === 'ready';
+
+  return (
+    <div className={`flex items-center gap-4 p-4 rounded-lg border transition-all duration-300 ${statusColor}`}>
+      <div className={`p-2 rounded-lg ${isDone ? 'bg-green-500/20' : isActive ? 'bg-blue-500/20' : 'bg-gray-800'}`}>
+        <Icon className={`w-5 h-5 ${isDone ? 'text-green-400' : isActive ? 'text-blue-400' : 'text-gray-400'}`} />
+      </div>
+
+      <div className="flex-1">
+        <div className={`font-medium ${disabled ? 'text-gray-600' : 'text-white'}`}>{step.name}</div>
+        <div className={`text-sm ${isDone ? 'text-green-400' : isActive ? 'text-blue-400' : 'text-gray-500'}`}>
+          {disabled ? 'Waiting for cleanup...' : (step.message || statusText)}
+          {step.duration && ` (${(step.duration / 1000).toFixed(1)}s)`}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {disabled ? (
+          <Clock className="w-5 h-5 text-gray-600" />
+        ) : (
+          <CreateStatusIcon status={step.status} />
         )}
       </div>
-      <div className={`flex-1 ${isCleanup ? 'pb-3' : 'pb-5'}`}>
-        <div className="flex items-center gap-2 flex-wrap">
-          <h3 className={`${isCleanup ? 'text-sm' : 'font-medium'} ${colors.text}`}>
-            {step.label}
-          </h3>
-          {step.duration && step.duration > 0 && (
-            <span className="text-xs text-gray-500">({(step.duration / 1000).toFixed(1)}s)</span>
-          )}
-          {step.verified === true && !isCleanup && (
-            <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">verified</span>
-          )}
-          {step.verified === false && step.status === 'success' && !isCleanup && (
-            <span className="text-xs bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">unverified</span>
-          )}
-        </div>
-        <p className={`text-sm ${step.status === 'error' ? 'text-red-400' : 'text-gray-500'} ${isCleanup ? 'text-xs' : ''}`}>
-          {displayDescription}
-        </p>
-      </div>
     </div>
   );
 }
 
-function VerificationSummary({ verification }: { verification?: { passed: number; total: number; allPassed: boolean } }) {
-  if (!verification) return null;
+// ============================================================================
+// PHASE HEADER
+// ============================================================================
 
-  const { passed, total, allPassed } = verification;
-  const percentage = total > 0 ? Math.round((passed / total) * 100) : 0;
-
+function PhaseHeader({
+  phase,
+  title,
+  subtitle,
+  icon: Icon,
+  isActive,
+  isComplete,
+  count
+}: {
+  phase: number;
+  title: string;
+  subtitle: string;
+  icon: any;
+  isActive: boolean;
+  isComplete: boolean;
+  count?: string;
+}) {
   return (
-    <div className={`rounded-lg p-4 mb-4 ${allPassed ? 'bg-green-500/10 border border-green-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {allPassed ? (
-            <ShieldCheck className="w-5 h-5 text-green-400" />
-          ) : (
-            <AlertCircle className="w-5 h-5 text-yellow-400" />
-          )}
-          <span className={allPassed ? 'text-green-400' : 'text-yellow-400'}>
-            Verification: {passed}/{total} checks passed
-          </span>
+    <div className={`flex items-center gap-4 mb-4 p-4 rounded-lg border ${
+      isComplete ? 'border-green-500/50 bg-green-500/10' :
+      isActive ? 'border-purple-500/50 bg-purple-500/10' :
+      'border-gray-700 bg-gray-900/50'
+    }`}>
+      <div className={`flex items-center justify-center w-10 h-10 rounded-full font-bold ${
+        isComplete ? 'bg-green-500 text-white' :
+        isActive ? 'bg-purple-500 text-white' :
+        'bg-gray-700 text-gray-400'
+      }`}>
+        {isComplete ? <CheckCircle className="w-5 h-5" /> : phase}
+      </div>
+
+      <div className="flex-1">
+        <div className={`font-semibold ${isComplete ? 'text-green-400' : isActive ? 'text-purple-400' : 'text-gray-400'}`}>
+          {title}
         </div>
-        <div className="text-sm text-gray-400">{percentage}%</div>
+        <div className="text-sm text-gray-500">{subtitle}</div>
       </div>
-      <div className="mt-2 h-2 bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full transition-all duration-500 ${allPassed ? 'bg-green-500' : 'bg-yellow-500'}`}
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
+
+      {count && (
+        <div className={`text-sm font-medium ${isComplete ? 'text-green-400' : 'text-gray-500'}`}>
+          {count}
+        </div>
+      )}
+
+      <Icon className={`w-6 h-6 ${
+        isComplete ? 'text-green-400' :
+        isActive ? 'text-purple-400' :
+        'text-gray-600'
+      }`} />
     </div>
   );
 }
+
+// ============================================================================
+// COLOR SWATCH
+// ============================================================================
 
 function ColorSwatch({ color, label }: { color: string; label: string }) {
   return (
@@ -297,11 +338,23 @@ function SetupContent() {
   const searchParams = useSearchParams();
   const platformType = (searchParams.get('type') as PlatformType) || 'founder_service_provider';
 
-  const [currentStep, setCurrentStep] = useState<'form' | 'extracting' | 'review' | 'creating' | 'success' | 'error'>('form');
-  const [steps, setSteps] = useState<Step[]>(getInitialSteps());
-  const [result, setResult] = useState<OrchestrationResult | null>(null);
-  const [extractionError, setExtractionError] = useState<string | null>(null);
+  // UI State
+  const [currentStep, setCurrentStep] = useState<'form' | 'extracting' | 'review' | 'running' | 'success' | 'error'>('form');
+  const [currentPhase, setCurrentPhase] = useState<'idle' | 'cleanup' | 'create'>('idle');
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+
+  // Cleanup State
+  const [cleanupComponents, setCleanupComponents] = useState<CleanupComponent[]>(getInitialCleanupComponents());
+  const [cleanupComplete, setCleanupComplete] = useState(false);
+
+  // Create State
+  const [createSteps, setCreateSteps] = useState<CreateStep[]>(getInitialCreateSteps());
+
+  // Result State
+  const [result, setResult] = useState<OrchestrationResult | null>(null);
+
+  // Form State
   const [formData, setFormData] = useState<FormData>({
     companyName: '',
     companyWebsite: '',
@@ -330,7 +383,7 @@ function SetupContent() {
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
 
-    if (currentStep === 'creating') {
+    if (currentStep === 'running') {
       setElapsedTime(0);
       interval = setInterval(() => {
         setElapsedTime(prev => prev + 1);
@@ -343,103 +396,28 @@ function SetupContent() {
   }, [currentStep]);
 
   // ============================================================================
-  // STEP PROGRESS - Mark steps as running in sequence (orange, not green)
+  // HELPER FUNCTIONS
   // ============================================================================
 
-  const startProgressSimulation = () => {
-    let currentIdx = 0;
-
-    const interval = setInterval(() => {
-      setSteps(prev => {
-        const newSteps = [...prev];
-
-        // Mark current as running (ORANGE, not green)
-        if (currentIdx < newSteps.length) {
-          // Leave previous step as running (will be updated by real result)
-          if (newSteps[currentIdx].status === 'pending') {
-            newSteps[currentIdx].status = 'running';
-          }
-          currentIdx++;
-        }
-
-        return newSteps;
-      });
-
-      if (currentIdx >= STEP_ORDER.length) {
-        clearInterval(interval);
-      }
-    }, 2000); // Slower to match real progress
-
-    return () => clearInterval(interval);
+  const updateCleanupComponent = (id: string, updates: Partial<CleanupComponent>) => {
+    setCleanupComponents(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
   };
 
-  // ============================================================================
-  // UPDATE STEPS FROM REAL RESULT
-  // ============================================================================
-
-  const updateStepsFromResult = (result: OrchestrationResult) => {
-    setSteps(prev => {
-      const newSteps = [...prev];
-
-      for (const resultStep of result.steps) {
-        const idx = newSteps.findIndex(s => s.id === resultStep.step);
-        if (idx !== -1) {
-          // Map status correctly including verification state
-          let mappedStatus: StepStatus = 'pending';
-          if (resultStep.status === 'success') {
-            mappedStatus = 'success';
-          } else if (resultStep.status === 'error') {
-            mappedStatus = 'error';
-          } else if (resultStep.status === 'skipped') {
-            mappedStatus = 'skipped';
-          } else if (resultStep.status === 'verifying') {
-            mappedStatus = 'verifying';
-          } else if (resultStep.status === 'in_progress') {
-            mappedStatus = 'running';
-          }
-
-          newSteps[idx] = {
-            ...newSteps[idx],
-            status: mappedStatus,
-            message: resultStep.message,
-            error: resultStep.error,
-            duration: resultStep.duration,
-            verified: resultStep.verified,
-            verificationDetails: resultStep.verificationDetails,
-          };
-        } else {
-          // Handle new steps like 'verify-deployment' or 'rollback'
-          if (STEP_CONFIG[resultStep.step]) {
-            newSteps.push({
-              id: resultStep.step,
-              label: STEP_CONFIG[resultStep.step].label,
-              description: STEP_CONFIG[resultStep.step].description,
-              status: resultStep.status === 'success' ? 'success' :
-                      resultStep.status === 'error' ? 'error' :
-                      resultStep.status === 'skipped' ? 'skipped' : 'pending',
-              message: resultStep.message,
-              error: resultStep.error,
-              duration: resultStep.duration,
-              isCleanup: STEP_CONFIG[resultStep.step].isCleanup,
-              verified: resultStep.verified,
-              verificationDetails: resultStep.verificationDetails,
-            });
-          }
-        }
-      }
-
-      // Mark remaining pending/running steps as skipped if we had an error
-      if (!result.success) {
-        newSteps.forEach((step, idx) => {
-          if (step.status === 'pending' || step.status === 'running') {
-            newSteps[idx] = { ...step, status: 'skipped', message: 'Skipped due to error' };
-          }
-        });
-      }
-
-      return newSteps;
-    });
+  const updateCreateStep = (id: string, updates: Partial<CreateStep>) => {
+    setCreateSteps(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
   };
+
+  const allCleanupVerified = cleanupComponents.every(c =>
+    c.status === 'verified' || c.status === 'not_found'
+  );
+
+  const cleanupVerifiedCount = cleanupComponents.filter(c =>
+    c.status === 'verified' || c.status === 'not_found'
+  ).length;
+
+  const createReadyCount = createSteps.filter(s =>
+    s.status === 'ready' || s.status === 'warning'
+  ).length;
 
   // ============================================================================
   // EXTRACTION
@@ -467,7 +445,6 @@ function SetupContent() {
       const data = await response.json();
 
       if (data.success && data.branding) {
-        // Construct full branding object from API response + form data
         const extractedColors = data.branding.colors || {};
         const fullBranding: ExtractedBranding = {
           company: {
@@ -488,10 +465,7 @@ function SetupContent() {
           platformType: formData.platformType,
         };
 
-        setFormData(prev => ({
-          ...prev,
-          branding: fullBranding,
-        }));
+        setFormData(prev => ({ ...prev, branding: fullBranding }));
         setCurrentStep('review');
       } else {
         setExtractionError(data.error || 'Extraction failed');
@@ -519,18 +493,85 @@ function SetupContent() {
   };
 
   // ============================================================================
-  // ORCHESTRATION
+  // MAIN ORCHESTRATION
   // ============================================================================
 
   const handleCreate = async () => {
-    setCurrentStep('creating');
-    setSteps(getInitialSteps());
+    // Reset states
+    setCurrentStep('running');
+    setCurrentPhase('cleanup');
+    setCleanupComplete(false);
+    setCleanupComponents(getInitialCleanupComponents());
+    setCreateSteps(getInitialCreateSteps());
+    setResult(null);
 
-    // Start simulation (shows orange for in-progress)
-    const stopSimulation = startProgressSimulation();
+    const projectSlug = formData.companyName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
 
     try {
-      const response = await fetch('/api/setup/orchestrate', {
+      // ======================================================================
+      // PHASE 1: CLEANUP - Delete and verify each component
+      // ======================================================================
+
+      // Set all to "deleting" initially
+      setCleanupComponents(prev => prev.map(c => ({ ...c, status: 'deleting' as CleanupStatus })));
+
+      const cleanupResponse = await fetch('/api/setup/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectSlug,
+          companyName: formData.companyName,
+        }),
+      });
+
+      const cleanupData = await cleanupResponse.json();
+
+      // Update each component based on cleanup results
+      if (cleanupData.results) {
+        for (const result of cleanupData.results) {
+          const componentId = result.component.toLowerCase();
+
+          if (result.verified) {
+            updateCleanupComponent(componentId, {
+              status: result.found ? 'verified' : 'not_found',
+              message: result.found
+                ? `Deleted and verified`
+                : 'Not found (clean)',
+              attempts: result.attempts,
+            });
+          } else {
+            updateCleanupComponent(componentId, {
+              status: 'error',
+              message: result.error || 'Failed to delete',
+              attempts: result.attempts,
+            });
+          }
+        }
+      }
+
+      // Check if all cleanup succeeded
+      if (!cleanupData.success || !cleanupData.allVerifiedDeleted) {
+        const failedComponents = cleanupData.results
+          ?.filter((r: any) => !r.verified)
+          ?.map((r: any) => r.component)
+          ?.join(', ') || 'unknown';
+
+        throw new Error(`Cleanup failed for: ${failedComponents}`);
+      }
+
+      // Mark cleanup as complete
+      setCleanupComplete(true);
+
+      // ======================================================================
+      // PHASE 2: CREATE - Build all components
+      // ======================================================================
+      setCurrentPhase('create');
+
+      const orchestrateResponse = await fetch('/api/setup/orchestrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -546,17 +587,36 @@ function SetupContent() {
           platformType: formData.platformType,
           platformMode: 'screening',
           branding: formData.branding,
+          skipPreCleanup: true, // We already did cleanup
         }),
       });
 
-      const data: OrchestrationResult = await response.json();
-      stopSimulation();
-      setResult(data);
-      updateStepsFromResult(data);
-      setCurrentStep(data.success ? 'success' : 'error');
+      const orchestrateData: OrchestrationResult = await orchestrateResponse.json();
+
+      // Update create steps from result
+      if (orchestrateData.steps) {
+        for (const step of orchestrateData.steps) {
+          const stepId = step.step;
+
+          let status: CreateStatus = 'pending';
+          if (step.status === 'success') status = 'ready';
+          else if (step.status === 'warning') status = 'warning';
+          else if (step.status === 'error') status = 'error';
+          else if (step.status === 'skipped') status = 'skipped';
+
+          updateCreateStep(stepId, {
+            status,
+            message: step.message || step.error,
+            duration: step.duration,
+            verified: step.verified,
+          });
+        }
+      }
+
+      setResult(orchestrateData);
+      setCurrentStep(orchestrateData.success ? 'success' : 'error');
+
     } catch (error: any) {
-      stopSimulation();
-      setCurrentStep('error');
       setResult({
         success: false,
         platformUrl: null,
@@ -564,12 +624,16 @@ function SetupContent() {
         resources: { supabase: null, github: null, vercel: null, elevenlabs: null },
         error: error.message || 'An unexpected error occurred',
       });
+      setCurrentStep('error');
     }
   };
 
   const handleRetry = () => {
     setCurrentStep('form');
-    setSteps(getInitialSteps());
+    setCurrentPhase('idle');
+    setCleanupComponents(getInitialCleanupComponents());
+    setCreateSteps(getInitialCreateSteps());
+    setCleanupComplete(false);
     setResult(null);
     setElapsedTime(0);
     setFormData(prev => ({ ...prev, branding: null }));
@@ -598,9 +662,7 @@ function SetupContent() {
   if (currentStep === 'review' && formData.branding) {
     const { branding } = formData;
 
-    // Ensure branding has required structure (defensive check)
     if (!branding.company || !branding.colors) {
-      // Redirect back to form if branding is incomplete
       setCurrentStep('form');
       return null;
     }
@@ -614,7 +676,6 @@ function SetupContent() {
           </div>
 
           <div className="bg-slate-900 rounded-xl p-8 space-y-6">
-            {/* Company */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Company</h3>
               <div className="grid gap-2 text-sm">
@@ -624,7 +685,6 @@ function SetupContent() {
               </div>
             </div>
 
-            {/* Colors */}
             <div>
               <h3 className="text-lg font-semibold mb-3">Colors</h3>
               <div className="grid grid-cols-2 gap-3">
@@ -635,19 +695,19 @@ function SetupContent() {
               </div>
             </div>
 
-            {/* Actions */}
             <div className="flex gap-4 pt-4">
               <button
                 onClick={() => setCurrentStep('form')}
-                className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold"
+                className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
               >
                 Edit Details
               </button>
               <button
                 onClick={handleCreate}
-                className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold"
+                className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
               >
                 Create Platform
+                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -708,7 +768,7 @@ function SetupContent() {
                     type="button"
                     onClick={handleExtract}
                     disabled={!formData.companyWebsite}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg flex items-center gap-2"
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg flex items-center gap-2 transition-colors"
                   >
                     <Globe className="w-4 h-4" />
                     Extract
@@ -738,12 +798,6 @@ function SetupContent() {
                   <option value="commercial_investor">Commercial Investors (VCs, Angels, PE)</option>
                   <option value="family_office">Family Offices (Patient Capital)</option>
                 </select>
-                <p className="text-xs text-gray-400 mt-1">
-                  {formData.platformType === 'founder_service_provider' && 'For service providers like Lionheart - founders only, no investor matching'}
-                  {formData.platformType === 'impact_investor' && 'For impact-focused funds - includes SDG tracking and impact returns'}
-                  {formData.platformType === 'commercial_investor' && 'For VCs, angels, and PE - traditional fundraising metrics'}
-                  {formData.platformType === 'family_office' && 'For family offices - patient capital, long-term focus'}
-                </p>
               </div>
             </div>
 
@@ -815,11 +869,11 @@ function SetupContent() {
               <button
                 type="button"
                 onClick={handleSkipExtraction}
-                className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold"
+                className="flex-1 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
               >
                 Skip Extraction
               </button>
-              <button type="submit" className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold">
+              <button type="submit" className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold transition-colors">
                 Extract & Continue
               </button>
             </div>
@@ -830,72 +884,120 @@ function SetupContent() {
   }
 
   // ============================================================================
-  // RENDER: CREATING / SUCCESS / ERROR
+  // RENDER: RUNNING / SUCCESS / ERROR
   // ============================================================================
-
-  const cleanupSteps = steps.filter(s => s.isCleanup);
-  const creationSteps = steps.filter(s => !s.isCleanup);
 
   return (
     <div className="min-h-screen bg-slate-950 text-white py-12 px-4">
-      <div className="max-w-2xl mx-auto">
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">
-            {currentStep === 'creating' && 'Creating Your Platform'}
-            {currentStep === 'success' && (result?.fullyVerified ? 'Platform Verified!' : 'Platform Created')}
+            {currentStep === 'running' && 'Creating Your Platform'}
+            {currentStep === 'success' && 'Platform Created!'}
             {currentStep === 'error' && 'Setup Failed'}
           </h1>
           <p className="text-gray-400">
-            {currentStep === 'creating' && `Elapsed: ${Math.floor(elapsedTime / 60)}:${(elapsedTime % 60).toString().padStart(2, '0')}`}
-            {currentStep === 'success' && (result?.fullyVerified ? 'All verifications passed' : 'Some verifications pending')}
+            {currentStep === 'running' && `Elapsed: ${Math.floor(elapsedTime / 60)}:${(elapsedTime % 60).toString().padStart(2, '0')}`}
+            {currentStep === 'success' && 'All components verified and ready'}
             {currentStep === 'error' && 'An error occurred during setup'}
           </p>
         </div>
 
-        <div className="bg-slate-900 rounded-xl p-8">
-          {/* Verification Summary */}
-          {(currentStep === 'success' || currentStep === 'error') && result?.verification && (
-            <VerificationSummary verification={result.verification} />
-          )}
+        {/* Main Content */}
+        <div className="space-y-6">
+          {/* ================================================================
+              PHASE 1: CLEANUP
+          ================================================================ */}
+          <div className="bg-slate-900 rounded-xl p-6">
+            <PhaseHeader
+              phase={1}
+              title="Cleanup - Verify Deletion"
+              subtitle="Delete any existing components and verify they're gone"
+              icon={Trash2}
+              isActive={currentPhase === 'cleanup'}
+              isComplete={cleanupComplete}
+              count={`${cleanupVerifiedCount}/4 verified`}
+            />
 
-          {/* Cleanup Steps */}
-          <div className="mb-6">
-            <h3 className="text-sm font-medium text-orange-400 mb-3 flex items-center gap-2">
-              <Trash2 className="w-4 h-4" />
-              Pre-flight Cleanup
-            </h3>
-            <div className="pl-2 border-l border-orange-500/30">
-              {cleanupSteps.map((step, idx) => (
-                <StepItem key={step.id} step={step} isLast={idx === cleanupSteps.length - 1} />
+            <div className="space-y-3">
+              {cleanupComponents.map(component => (
+                <CleanupComponentRow key={component.id} component={component} />
               ))}
             </div>
+
+            {/* Cleanup Status Message */}
+            {currentPhase === 'cleanup' && !cleanupComplete && (
+              <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+                <p className="text-orange-400 text-sm flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Deleting and verifying each component. Creation will start when all are confirmed deleted.
+                </p>
+              </div>
+            )}
+
+            {cleanupComplete && (
+              <div className="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                <p className="text-green-400 text-sm flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  All components verified deleted. Proceeding to creation...
+                </p>
+              </div>
+            )}
           </div>
 
-          <div className="border-t border-slate-700 my-6" />
+          {/* ================================================================
+              PHASE 2: CREATE
+          ================================================================ */}
+          <div className={`bg-slate-900 rounded-xl p-6 transition-opacity duration-300 ${
+            cleanupComplete ? 'opacity-100' : 'opacity-50'
+          }`}>
+            <PhaseHeader
+              phase={2}
+              title="Create - Build Components"
+              subtitle="Create and verify each component is ready"
+              icon={Sparkles}
+              isActive={currentPhase === 'create'}
+              isComplete={currentStep === 'success'}
+              count={`${createReadyCount}/6 ready`}
+            />
 
-          {/* Creation Steps */}
-          <div className="mb-6">
-            <h3 className="text-sm font-medium text-blue-400 mb-3 flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              Platform Creation
-            </h3>
-            {creationSteps.map((step, idx) => (
-              <StepItem key={step.id} step={step} isLast={idx === creationSteps.length - 1} />
-            ))}
+            <div className="space-y-3">
+              {createSteps.map(step => (
+                <CreateStepRow
+                  key={step.id}
+                  step={step}
+                  disabled={!cleanupComplete}
+                />
+              ))}
+            </div>
+
+            {/* Waiting for cleanup message */}
+            {!cleanupComplete && currentStep === 'running' && (
+              <div className="mt-4 p-3 bg-gray-800 border border-gray-700 rounded-lg">
+                <p className="text-gray-400 text-sm flex items-center gap-2">
+                  <Clock className="w-4 h-4" />
+                  Waiting for all cleanup verifications to complete before starting creation...
+                </p>
+              </div>
+            )}
           </div>
 
-          {/* Success */}
+          {/* ================================================================
+              SUCCESS RESULT
+          ================================================================ */}
           {currentStep === 'success' && result && (
-            <div className="border-t border-slate-700 pt-6 space-y-4">
-              <div className={`rounded-lg p-4 ${result.fullyVerified ? 'bg-green-500/10 border border-green-500/30' : 'bg-yellow-500/10 border border-yellow-500/30'}`}>
-                <h3 className={`font-semibold mb-2 ${result.fullyVerified ? 'text-green-400' : 'text-yellow-400'}`}>
-                  {result.fullyVerified ? 'Your platform is live and verified!' : 'Platform created - some checks pending'}
+            <div className="bg-slate-900 rounded-xl p-6 space-y-4">
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
+                <h3 className="font-semibold text-green-400 mb-2 flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5" />
+                  Your platform is live!
                 </h3>
                 <a
                   href={result.platformUrl || '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`flex items-center gap-2 hover:opacity-80 ${result.fullyVerified ? 'text-green-300' : 'text-yellow-300'}`}
+                  className="flex items-center gap-2 text-green-300 hover:text-green-200 transition-colors"
                 >
                   {result.platformUrl}
                   <ExternalLink className="w-4 h-4" />
@@ -909,7 +1011,7 @@ function SetupContent() {
                     href={result.resources.github.repoUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 text-blue-400 hover:text-blue-300"
+                    className="flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors"
                   >
                     {result.resources.github.repoUrl}
                     <ExternalLink className="w-4 h-4" />
@@ -925,23 +1027,22 @@ function SetupContent() {
             </div>
           )}
 
-          {/* Error */}
+          {/* ================================================================
+              ERROR RESULT
+          ================================================================ */}
           {currentStep === 'error' && result && (
-            <div className="border-t border-slate-700 pt-6 space-y-4">
+            <div className="bg-slate-900 rounded-xl p-6 space-y-4">
               <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-                <h3 className="text-red-400 font-semibold mb-2">Error</h3>
+                <h3 className="text-red-400 font-semibold mb-2 flex items-center gap-2">
+                  <XCircle className="w-5 h-5" />
+                  Error
+                </h3>
                 <p className="text-red-300">{result.error}</p>
               </div>
 
-              {result.rollback?.performed && (
-                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4">
-                  <p className="text-yellow-300 text-sm">Resources have been cleaned up.</p>
-                </div>
-              )}
-
               <button
                 onClick={handleRetry}
-                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold"
+                className="w-full flex items-center justify-center gap-2 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-semibold transition-colors"
               >
                 <RotateCcw className="w-4 h-4" />
                 Try Again
