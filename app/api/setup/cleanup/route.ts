@@ -1,22 +1,99 @@
 // app/api/setup/cleanup/route.ts
 // ============================================================================
-// CLEANUP v2 - Delete with verification loops
+// CLEANUP v5 - Search using BOTH company name AND website domain
 //
-// Each component: Delete → Verify deleted → Retry if needed → Confirm
-// Only returns success when ALL components are verified deleted
+// The bug: orchestrator creates projects from website domain (e.g. "lionhearted-business-online")
+// but cleanup was searching using company name (e.g. "lionhearted-business-solutions")
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const MAX_RETRIES = 5;
-const POLL_INTERVAL_MS = 3000;
-const MAX_WAIT_MS = 60000;
+const MAX_RETRIES = 3;
+const POLL_INTERVAL_MS = 2000;
+const VERIFY_CHECKS = 5;
+
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================================
-// EXISTENCE CHECK FUNCTIONS
+// SLUG GENERATION - Extract all possible naming patterns
 // ============================================================================
 
-async function findSupabaseProject(projectSlug: string): Promise<{ exists: boolean; id?: string; name?: string }> {
+function generateSearchPatterns(companyName: string, companyWebsite?: string): string[] {
+  const patterns: string[] = [];
+
+  // Pattern 1: From company name
+  const fromCompanyName = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+  patterns.push(fromCompanyName);
+
+  // Pattern 2: Normalized company name (no separators)
+  const normalizedCompany = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!patterns.includes(normalizedCompany)) {
+    patterns.push(normalizedCompany);
+  }
+
+  // Pattern 3: From website URL
+  if (companyWebsite) {
+    try {
+      const url = new URL(companyWebsite.startsWith('http') ? companyWebsite : `https://${companyWebsite}`);
+      const hostname = url.hostname.replace(/^www\./, '');
+
+      // Get domain without TLD
+      const parts = hostname.split('.');
+      const domainWithoutTld = parts.slice(0, -1).join('-');
+
+      // Domain + TLD as slug (e.g., "lionhearted-business-online" from "lionheartedbusinesssolutions.online")
+      const domainSlug = hostname
+        .replace(/\./g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .slice(0, 40);
+
+      if (!patterns.includes(domainSlug)) {
+        patterns.push(domainSlug);
+      }
+
+      // Just the domain part
+      if (domainWithoutTld && !patterns.includes(domainWithoutTld)) {
+        patterns.push(domainWithoutTld);
+      }
+
+      // Split camelCase/joined words in domain
+      // "lionheartedbusinesssolutions" → "lionhearted-business-solutions"
+      const splitDomain = domainWithoutTld
+        .replace(/([a-z])([A-Z])/g, '$1-$2')
+        .toLowerCase();
+      if (!patterns.includes(splitDomain) && splitDomain !== domainWithoutTld) {
+        patterns.push(splitDomain);
+      }
+
+    } catch (e) {
+      console.log(`[Cleanup] Failed to parse website URL: ${companyWebsite}`);
+    }
+  }
+
+  // Remove empty patterns and dedupe
+  return [...new Set(patterns.filter(p => p && p.length > 0))];
+}
+
+function normalizeForMatch(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// ============================================================================
+// FIND FUNCTIONS - Search for ANY matching pattern
+// ============================================================================
+
+interface FindResult {
+  exists: boolean;
+  id?: string;
+  name?: string;
+  matchedPattern?: string;
+}
+
+async function findSupabaseProject(patterns: string[]): Promise<FindResult> {
   const token = process.env.SUPABASE_ACCESS_TOKEN;
   if (!token) return { exists: false };
 
@@ -27,95 +104,220 @@ async function findSupabaseProject(projectSlug: string): Promise<{ exists: boole
     if (!res.ok) return { exists: false };
 
     const projects = await res.json();
-    const slugLower = projectSlug.toLowerCase();
-    const slugNormalized = slugLower.replace(/[^a-z0-9]/g, '');
 
-    const match = projects.find((p: any) => {
-      const pName = (p.name || '').toLowerCase();
-      const pNormalized = pName.replace(/[^a-z0-9]/g, '');
-      return pName === slugLower || pNormalized === slugNormalized || pName.replace(/\s+/g, '-') === slugLower;
-    });
+    console.log(`[Cleanup] Supabase: Searching for patterns: ${patterns.join(', ')}`);
+    console.log(`[Cleanup] Supabase: Found ${projects.length} projects`);
 
-    return match ? { exists: true, id: match.id, name: match.name } : { exists: false };
+    for (const project of projects) {
+      const projectName = (project.name || '').toLowerCase();
+      const projectNormalized = normalizeForMatch(projectName);
+
+      for (const pattern of patterns) {
+        const patternNormalized = normalizeForMatch(pattern);
+
+        // Check various match conditions
+        if (
+          projectName === pattern ||
+          projectNormalized === patternNormalized ||
+          projectName.includes(pattern) ||
+          pattern.includes(projectName) ||
+          projectNormalized.includes(patternNormalized) ||
+          patternNormalized.includes(projectNormalized)
+        ) {
+          console.log(`[Cleanup] Supabase: ✓ MATCHED "${project.name}" via pattern "${pattern}"`);
+          return { exists: true, id: project.id, name: project.name, matchedPattern: pattern };
+        }
+      }
+    }
+
+    console.log('[Cleanup] Supabase: No matching project found');
+    return { exists: false };
   } catch (e) {
-    console.error('[Cleanup] Error checking Supabase:', e);
+    console.error('[Cleanup] Supabase error:', e);
     return { exists: false };
   }
 }
 
-async function findGitHubRepo(repoName: string): Promise<{ exists: boolean }> {
+async function findGitHubRepo(patterns: string[]): Promise<FindResult> {
   const token = process.env.GITHUB_TOKEN;
   const owner = process.env.GITHUB_OWNER || 'dennissolver';
   if (!token) return { exists: false };
 
+  console.log(`[Cleanup] GitHub: Searching for patterns: ${patterns.join(', ')}`);
+
+  // Try each pattern directly first (faster)
+  for (const pattern of patterns) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${pattern}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+        },
+      });
+      if (res.status === 200) {
+        const data = await res.json();
+        console.log(`[Cleanup] GitHub: ✓ Found repo "${data.name}" via direct pattern "${pattern}"`);
+        return { exists: true, id: data.name, name: data.name, matchedPattern: pattern };
+      }
+    } catch {}
+  }
+
+  // Fall back to listing repos and searching
   try {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}`, {
+    const res = await fetch(`https://api.github.com/users/${owner}/repos?per_page=100&sort=updated`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/vnd.github.v3+json',
       },
     });
-    return { exists: res.status === 200 };
-  } catch {
-    return { exists: false };
+    if (!res.ok) return { exists: false };
+
+    const repos = await res.json();
+    console.log(`[Cleanup] GitHub: Checking ${repos.length} repos for pattern matches...`);
+
+    for (const repo of repos) {
+      const repoName = (repo.name || '').toLowerCase();
+      const repoNormalized = normalizeForMatch(repoName);
+
+      for (const pattern of patterns) {
+        const patternNormalized = normalizeForMatch(pattern);
+
+        if (
+          repoName === pattern ||
+          repoNormalized === patternNormalized ||
+          repoName.includes(pattern) ||
+          pattern.includes(repoName) ||
+          repoNormalized.includes(patternNormalized) ||
+          patternNormalized.includes(repoNormalized)
+        ) {
+          console.log(`[Cleanup] GitHub: ✓ MATCHED "${repo.name}" via pattern "${pattern}"`);
+          return { exists: true, id: repo.name, name: repo.name, matchedPattern: pattern };
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[Cleanup] GitHub error:', e);
   }
+
+  console.log('[Cleanup] GitHub: No matching repo found');
+  return { exists: false };
 }
 
-async function findVercelProject(projectName: string): Promise<{ exists: boolean; id?: string }> {
+async function findVercelProject(patterns: string[]): Promise<FindResult> {
   const token = process.env.VERCEL_TOKEN;
   const teamId = process.env.VERCEL_TEAM_ID;
   if (!token) return { exists: false };
 
+  console.log(`[Cleanup] Vercel: Searching for patterns: ${patterns.join(', ')}`);
+
+  // Try direct lookup first (faster)
+  for (const pattern of patterns) {
+    try {
+      const url = teamId
+        ? `https://api.vercel.com/v9/projects/${pattern}?teamId=${teamId}`
+        : `https://api.vercel.com/v9/projects/${pattern}`;
+
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 200) {
+        const data = await res.json();
+        console.log(`[Cleanup] Vercel: ✓ Found project "${data.name}" via direct pattern "${pattern}"`);
+        return { exists: true, id: data.id, name: data.name, matchedPattern: pattern };
+      }
+    } catch {}
+  }
+
+  // Fall back to listing all projects
   try {
     const url = teamId
-      ? `https://api.vercel.com/v9/projects/${projectName}?teamId=${teamId}`
-      : `https://api.vercel.com/v9/projects/${projectName}`;
+      ? `https://api.vercel.com/v9/projects?teamId=${teamId}&limit=100`
+      : `https://api.vercel.com/v9/projects?limit=100`;
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    if (!res.ok) return { exists: false };
 
-    if (res.status === 200) {
-      const data = await res.json();
-      return { exists: true, id: data.id };
+    const data = await res.json();
+    const projects = data.projects || [];
+    console.log(`[Cleanup] Vercel: Checking ${projects.length} projects for pattern matches...`);
+
+    for (const project of projects) {
+      const projectName = (project.name || '').toLowerCase();
+      const projectNormalized = normalizeForMatch(projectName);
+
+      for (const pattern of patterns) {
+        const patternNormalized = normalizeForMatch(pattern);
+
+        if (
+          projectName === pattern ||
+          projectNormalized === patternNormalized ||
+          projectName.includes(pattern) ||
+          pattern.includes(projectName) ||
+          projectNormalized.includes(patternNormalized) ||
+          patternNormalized.includes(projectNormalized)
+        ) {
+          console.log(`[Cleanup] Vercel: ✓ MATCHED "${project.name}" via pattern "${pattern}"`);
+          return { exists: true, id: project.id, name: project.name, matchedPattern: pattern };
+        }
+      }
     }
-    return { exists: false };
-  } catch {
-    return { exists: false };
+  } catch (e) {
+    console.error('[Cleanup] Vercel error:', e);
   }
+
+  console.log('[Cleanup] Vercel: No matching project found');
+  return { exists: false };
 }
 
-async function findElevenLabsAgent(companyName: string, projectSlug: string): Promise<{ exists: boolean; id?: string; name?: string }> {
+async function findAllElevenLabsAgents(patterns: string[]): Promise<Array<{agent_id: string, name: string}>> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) return { exists: false };
+  if (!apiKey) return [];
 
   try {
     const res = await fetch('https://api.elevenlabs.io/v1/convai/agents', {
       headers: { 'xi-api-key': apiKey },
     });
-    if (!res.ok) return { exists: false };
+    if (!res.ok) return [];
 
     const data = await res.json();
     const agents = data.agents || [];
 
-    const companyLower = companyName.toLowerCase();
-    const slugLower = projectSlug.toLowerCase();
-    const companyNormalized = companyLower.replace(/[^a-z0-9]/g, '');
+    console.log(`[Cleanup] ElevenLabs: Searching for patterns: ${patterns.join(', ')}`);
+    console.log(`[Cleanup] ElevenLabs: Found ${agents.length} agents`);
 
-    const match = agents.find((a: any) => {
-      const agentName = (a.name || '').toLowerCase();
-      const agentNormalized = agentName.replace(/[^a-z0-9]/g, '');
-      return (
-        agentName.includes(companyLower) ||
-        agentName.includes(slugLower) ||
-        agentNormalized.includes(companyNormalized) ||
-        companyLower.includes(agentName)
-      );
-    });
+    const matches: Array<{agent_id: string, name: string}> = [];
 
-    return match ? { exists: true, id: match.agent_id, name: match.name } : { exists: false };
-  } catch {
-    return { exists: false };
+    for (const agent of agents) {
+      const agentName = (agent.name || '').toLowerCase();
+      const agentNormalized = normalizeForMatch(agentName);
+
+      for (const pattern of patterns) {
+        const patternNormalized = normalizeForMatch(pattern);
+
+        if (
+          agentName.includes(pattern) ||
+          pattern.includes(agentName) ||
+          agentNormalized.includes(patternNormalized) ||
+          patternNormalized.includes(agentNormalized)
+        ) {
+          console.log(`[Cleanup] ElevenLabs: ✓ MATCHED "${agent.name}" via pattern "${pattern}"`);
+          matches.push({ agent_id: agent.agent_id, name: agent.name });
+          break; // Don't add same agent multiple times
+        }
+      }
+    }
+
+    if (matches.length === 0) {
+      console.log('[Cleanup] ElevenLabs: No matching agents found');
+    }
+
+    return matches;
+  } catch (e) {
+    console.error('[Cleanup] ElevenLabs error:', e);
+    return [];
   }
 }
 
@@ -123,17 +325,20 @@ async function findElevenLabsAgent(companyName: string, projectSlug: string): Pr
 // DELETE FUNCTIONS
 // ============================================================================
 
-async function deleteSupabase(projectRef: string): Promise<boolean> {
+async function deleteSupabase(projectId: string): Promise<boolean> {
   const token = process.env.SUPABASE_ACCESS_TOKEN;
   if (!token) return false;
 
   try {
-    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}`, {
+    console.log(`[Cleanup] Supabase: Deleting project ${projectId}...`);
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
+    console.log(`[Cleanup] Supabase: DELETE response: ${res.status}`);
     return res.ok || res.status === 404;
-  } catch {
+  } catch (e) {
+    console.error('[Cleanup] Supabase DELETE error:', e);
     return false;
   }
 }
@@ -144,6 +349,7 @@ async function deleteGitHub(repoName: string): Promise<boolean> {
   if (!token) return false;
 
   try {
+    console.log(`[Cleanup] GitHub: Deleting ${owner}/${repoName}...`);
     const res = await fetch(`https://api.github.com/repos/${owner}/${repoName}`, {
       method: 'DELETE',
       headers: {
@@ -151,49 +357,57 @@ async function deleteGitHub(repoName: string): Promise<boolean> {
         Accept: 'application/vnd.github.v3+json',
       },
     });
+    console.log(`[Cleanup] GitHub: DELETE response: ${res.status}`);
     return res.ok || res.status === 404;
-  } catch {
+  } catch (e) {
+    console.error('[Cleanup] GitHub DELETE error:', e);
     return false;
   }
 }
 
-async function deleteVercel(projectName: string): Promise<boolean> {
+async function deleteVercel(projectId: string): Promise<boolean> {
   const token = process.env.VERCEL_TOKEN;
   const teamId = process.env.VERCEL_TEAM_ID;
   if (!token) return false;
 
   try {
     const url = teamId
-      ? `https://api.vercel.com/v9/projects/${projectName}?teamId=${teamId}`
-      : `https://api.vercel.com/v9/projects/${projectName}`;
+      ? `https://api.vercel.com/v9/projects/${projectId}?teamId=${teamId}`
+      : `https://api.vercel.com/v9/projects/${projectId}`;
 
+    console.log(`[Cleanup] Vercel: Deleting project ${projectId}...`);
     const res = await fetch(url, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
+    console.log(`[Cleanup] Vercel: DELETE response: ${res.status}`);
     return res.ok || res.status === 404;
-  } catch {
+  } catch (e) {
+    console.error('[Cleanup] Vercel DELETE error:', e);
     return false;
   }
 }
 
-async function deleteElevenLabs(agentId: string): Promise<boolean> {
+async function deleteElevenLabsAgent(agentId: string): Promise<boolean> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) return false;
 
   try {
+    console.log(`[Cleanup] ElevenLabs: Deleting agent ${agentId}...`);
     const res = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${agentId}`, {
       method: 'DELETE',
       headers: { 'xi-api-key': apiKey },
     });
+    console.log(`[Cleanup] ElevenLabs: DELETE response: ${res.status}`);
     return res.ok || res.status === 404;
-  } catch {
+  } catch (e) {
+    console.error('[Cleanup] ElevenLabs DELETE error:', e);
     return false;
   }
 }
 
 // ============================================================================
-// DELETE WITH VERIFICATION LOOP
+// DELETE & VERIFY
 // ============================================================================
 
 interface DeleteResult {
@@ -202,81 +416,160 @@ interface DeleteResult {
   deleted: boolean;
   verified: boolean;
   attempts: number;
-  id?: string;
+  resourceName?: string;
+  resourceId?: string;
+  matchedPattern?: string;
   error?: string;
 }
 
-async function deleteAndVerify(
-  component: string,
-  findFn: () => Promise<{ exists: boolean; id?: string }>,
-  deleteFn: (id: string) => Promise<boolean>
-): Promise<DeleteResult> {
-  const startTime = Date.now();
-  let attempts = 0;
+async function deleteAndVerifySupabase(patterns: string[]): Promise<DeleteResult> {
+  const result: DeleteResult = { component: 'Supabase', found: false, deleted: false, verified: false, attempts: 0 };
 
-  // First check if it exists
-  let existing = await findFn();
-
-  if (!existing.exists) {
-    console.log(`[Cleanup] ${component}: Not found, nothing to delete`);
-    return { component, found: false, deleted: true, verified: true, attempts: 0 };
+  const found = await findSupabaseProject(patterns);
+  if (!found.exists) {
+    return { ...result, verified: true };
   }
 
-  console.log(`[Cleanup] ${component}: Found (${existing.id}), starting delete-verify loop...`);
+  result.found = true;
+  result.resourceName = found.name;
+  result.resourceId = found.id;
+  result.matchedPattern = found.matchedPattern;
 
-  while (attempts < MAX_RETRIES && (Date.now() - startTime) < MAX_WAIT_MS) {
-    attempts++;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    result.attempts = attempt;
 
-    // Delete
-    console.log(`[Cleanup] ${component}: Delete attempt ${attempts}/${MAX_RETRIES}...`);
-    const deleteSuccess = await deleteFn(existing.id!);
+    await deleteSupabase(found.id!);
+    result.deleted = true;
 
-    if (!deleteSuccess) {
-      console.log(`[Cleanup] ${component}: Delete call failed, retrying...`);
-      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-      continue;
+    for (let i = 1; i <= VERIFY_CHECKS; i++) {
+      await wait(POLL_INTERVAL_MS);
+      const stillExists = await findSupabaseProject(patterns);
+      if (!stillExists.exists) {
+        console.log(`[Cleanup] Supabase: ✓ Verified deleted`);
+        return { ...result, verified: true };
+      }
+      console.log(`[Cleanup] Supabase: Still exists, check ${i}/${VERIFY_CHECKS}`);
     }
+  }
 
-    // Verify deletion with polling
-    let verifyAttempts = 0;
-    const maxVerifyAttempts = 10;
+  result.error = 'Failed to verify deletion';
+  return result;
+}
 
-    while (verifyAttempts < maxVerifyAttempts) {
-      verifyAttempts++;
-      await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+async function deleteAndVerifyGitHub(patterns: string[]): Promise<DeleteResult> {
+  const result: DeleteResult = { component: 'GitHub', found: false, deleted: false, verified: false, attempts: 0 };
 
-      const check = await findFn();
-      if (!check.exists) {
-        console.log(`[Cleanup] ${component}: ✓ Verified deleted after ${attempts} delete attempt(s), ${verifyAttempts} verify check(s)`);
-        return {
-          component,
-          found: true,
-          deleted: true,
-          verified: true,
-          attempts,
-          id: existing.id,
-        };
+  const found = await findGitHubRepo(patterns);
+  if (!found.exists) {
+    return { ...result, verified: true };
+  }
+
+  result.found = true;
+  result.resourceName = found.name;
+  result.resourceId = found.id;
+  result.matchedPattern = found.matchedPattern;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    result.attempts = attempt;
+
+    await deleteGitHub(found.name!);
+    result.deleted = true;
+
+    for (let i = 1; i <= VERIFY_CHECKS; i++) {
+      await wait(POLL_INTERVAL_MS);
+      const stillExists = await findGitHubRepo(patterns);
+      if (!stillExists.exists) {
+        console.log(`[Cleanup] GitHub: ✓ Verified deleted`);
+        return { ...result, verified: true };
+      }
+      console.log(`[Cleanup] GitHub: Still exists, check ${i}/${VERIFY_CHECKS}`);
+    }
+  }
+
+  result.error = 'Failed to verify deletion';
+  return result;
+}
+
+async function deleteAndVerifyVercel(patterns: string[]): Promise<DeleteResult> {
+  const result: DeleteResult = { component: 'Vercel', found: false, deleted: false, verified: false, attempts: 0 };
+
+  const found = await findVercelProject(patterns);
+  if (!found.exists) {
+    return { ...result, verified: true };
+  }
+
+  result.found = true;
+  result.resourceName = found.name;
+  result.resourceId = found.id;
+  result.matchedPattern = found.matchedPattern;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    result.attempts = attempt;
+
+    await deleteVercel(found.id!);
+    result.deleted = true;
+
+    for (let i = 1; i <= VERIFY_CHECKS; i++) {
+      await wait(POLL_INTERVAL_MS);
+      const stillExists = await findVercelProject(patterns);
+      if (!stillExists.exists) {
+        console.log(`[Cleanup] Vercel: ✓ Verified deleted`);
+        return { ...result, verified: true };
+      }
+      console.log(`[Cleanup] Vercel: Still exists, check ${i}/${VERIFY_CHECKS}`);
+    }
+  }
+
+  result.error = 'Failed to verify deletion';
+  return result;
+}
+
+async function deleteAndVerifyElevenLabs(patterns: string[]): Promise<DeleteResult> {
+  const result: DeleteResult = { component: 'ElevenLabs', found: false, deleted: false, verified: false, attempts: 0 };
+
+  const agents = await findAllElevenLabsAgents(patterns);
+  if (agents.length === 0) {
+    return { ...result, verified: true };
+  }
+
+  result.found = true;
+  result.resourceName = agents.map(a => a.name).join(', ');
+  result.resourceId = agents.map(a => a.agent_id).join(', ');
+
+  const agentIds = new Set(agents.map(a => a.agent_id));
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    result.attempts = attempt;
+
+    // Delete all known agents
+    for (const id of agentIds) {
+      await deleteElevenLabsAgent(id);
+    }
+    result.deleted = true;
+
+    for (let i = 1; i <= VERIFY_CHECKS; i++) {
+      await wait(POLL_INTERVAL_MS);
+      const remaining = await findAllElevenLabsAgents(patterns);
+
+      if (remaining.length === 0) {
+        console.log(`[Cleanup] ElevenLabs: ✓ All agents verified deleted`);
+        return { ...result, verified: true };
       }
 
-      console.log(`[Cleanup] ${component}: Still exists, verify check ${verifyAttempts}/${maxVerifyAttempts}...`);
-    }
+      // Add any newly found agents to delete list
+      for (const a of remaining) {
+        if (!agentIds.has(a.agent_id)) {
+          console.log(`[Cleanup] ElevenLabs: Adding new agent to delete: ${a.name}`);
+          agentIds.add(a.agent_id);
+        }
+      }
 
-    // Still exists after verify attempts, will retry delete
-    console.log(`[Cleanup] ${component}: Still exists after verify checks, retrying delete...`);
-    existing = await findFn(); // Refresh the ID in case it changed
+      console.log(`[Cleanup] ElevenLabs: ${remaining.length} agent(s) remain, check ${i}/${VERIFY_CHECKS}`);
+    }
   }
 
-  // Failed to delete after all retries
-  console.error(`[Cleanup] ${component}: ✗ Failed to verify deletion after ${attempts} attempts`);
-  return {
-    component,
-    found: true,
-    deleted: false,
-    verified: false,
-    attempts,
-    id: existing.id,
-    error: `Failed to delete after ${attempts} attempts`,
-  };
+  result.error = 'Failed to verify all agents deleted';
+  return result;
 }
 
 // ============================================================================
@@ -288,108 +581,67 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { projectSlug, companyName } = body;
+    const { projectSlug, companyName, companyWebsite } = body;
 
-    if (!projectSlug) {
-      return NextResponse.json({ error: 'projectSlug required' }, { status: 400 });
+    if (!companyName) {
+      return NextResponse.json(
+        { success: false, error: 'Missing companyName' },
+        { status: 400 }
+      );
     }
 
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`[Cleanup] Starting verified cleanup for: ${projectSlug}`);
-    console.log(`${'='.repeat(60)}`);
+    // Generate all possible search patterns
+    const patterns = generateSearchPatterns(companyName, companyWebsite);
 
-    const results: DeleteResult[] = [];
+    console.log('============================================================');
+    console.log('[Cleanup v5] Starting multi-pattern cleanup');
+    console.log(`[Cleanup] Company Name: "${companyName}"`);
+    console.log(`[Cleanup] Website: "${companyWebsite || 'not provided'}"`);
+    console.log(`[Cleanup] Search Patterns: ${patterns.join(', ')}`);
+    console.log('============================================================');
 
-    // ========================================================================
-    // 1. SUPABASE - Delete and verify
-    // ========================================================================
-    const supabaseResult = await deleteAndVerify(
-      'Supabase',
-      () => findSupabaseProject(projectSlug),
-      (id) => deleteSupabase(id)
-    );
-    results.push(supabaseResult);
+    // Run cleanup for each service
+    const [supabaseResult, githubResult, vercelResult, elevenLabsResult] = await Promise.all([
+      deleteAndVerifySupabase(patterns),
+      deleteAndVerifyGitHub(patterns),
+      deleteAndVerifyVercel(patterns),
+      deleteAndVerifyElevenLabs(patterns),
+    ]);
 
-    // ========================================================================
-    // 2. GITHUB - Delete and verify
-    // ========================================================================
-    const githubResult = await deleteAndVerify(
-      'GitHub',
-      () => findGitHubRepo(projectSlug),
-      () => deleteGitHub(projectSlug) // GitHub uses name, not ID
-    );
-    results.push(githubResult);
-
-    // ========================================================================
-    // 3. VERCEL - Delete and verify
-    // ========================================================================
-    const vercelResult = await deleteAndVerify(
-      'Vercel',
-      () => findVercelProject(projectSlug),
-      () => deleteVercel(projectSlug) // Vercel uses name, not ID
-    );
-    results.push(vercelResult);
-
-    // ========================================================================
-    // 4. ELEVENLABS - Delete and verify
-    // ========================================================================
-    const elevenlabsResult = await deleteAndVerify(
-      'ElevenLabs',
-      () => findElevenLabsAgent(companyName || projectSlug, projectSlug),
-      (id) => deleteElevenLabs(id)
-    );
-    results.push(elevenlabsResult);
-
-    // ========================================================================
-    // SUMMARY
-    // ========================================================================
+    const results = [supabaseResult, githubResult, vercelResult, elevenLabsResult];
     const allVerified = results.every(r => r.verified);
     const duration = Date.now() - startTime;
 
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`[Cleanup] ${allVerified ? '✓ ALL VERIFIED DELETED' : '✗ SOME DELETIONS FAILED'}`);
+    console.log('============================================================');
+    console.log(`[Cleanup] ${allVerified ? '✓ ALL VERIFIED' : '✗ SOME FAILED'}`);
     results.forEach(r => {
       const status = r.verified ? '✓' : '✗';
-      const detail = r.found ? `deleted (${r.attempts} attempts)` : 'not found';
+      const detail = r.found
+        ? `found "${r.resourceName}" (pattern: ${r.matchedPattern}) → ${r.verified ? 'deleted' : r.error}`
+        : 'not found';
       console.log(`  ${status} ${r.component}: ${detail}`);
     });
     console.log(`[Cleanup] Duration: ${(duration / 1000).toFixed(1)}s`);
-    console.log(`${'='.repeat(60)}\n`);
+    console.log('============================================================');
 
     return NextResponse.json({
       success: allVerified,
       allVerifiedDeleted: allVerified,
       results,
-      summary: {
-        supabase: supabaseResult.verified,
-        github: githubResult.verified,
-        vercel: vercelResult.verified,
-        elevenlabs: elevenlabsResult.verified,
-      },
       duration,
+      searchPatterns: patterns,
     });
 
   } catch (error: any) {
-    console.error('[Cleanup] Error:', error);
-    return NextResponse.json({
-      success: false,
-      error: error.message,
-      duration: Date.now() - startTime,
-    }, { status: 500 });
+    console.error('[Cleanup] Fatal error:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        allVerifiedDeleted: false,
+        error: error.message || 'Cleanup failed',
+        duration: Date.now() - startTime,
+      },
+      { status: 500 }
+    );
   }
-}
-
-export async function GET() {
-  return NextResponse.json({
-    service: 'cleanup',
-    version: 'v2-verified',
-    description: 'Delete-verify-retry loop for each component',
-    flow: 'Delete → Verify deleted → Retry if needed → Confirm',
-    components: ['Supabase', 'GitHub', 'Vercel', 'ElevenLabs'],
-    config: {
-      maxRetries: MAX_RETRIES,
-      pollIntervalMs: POLL_INTERVAL_MS,
-      maxWaitMs: MAX_WAIT_MS,
-    },
-  });
 }

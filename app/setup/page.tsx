@@ -525,6 +525,7 @@ function SetupContent() {
         body: JSON.stringify({
           projectSlug,
           companyName: formData.companyName,
+          companyWebsite: formData.companyWebsite, // v5: Also search by website domain
         }),
       });
 
