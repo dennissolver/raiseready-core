@@ -6,6 +6,7 @@
 // customizes config/client.ts with branding.
 //
 // FIX APPLIED: Added Step 1.5 to bootstrap empty repos before using Git Data API
+// FIX APPLIED: Added complete landing section to generated config
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -157,15 +158,10 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // STEP 1.5: Initialize empty repository with bootstrap commit
     // ========================================================================
-    // GitHub's Git Data API (blobs, trees, commits) requires at least one commit.
-    // The "create or update file contents" API uniquely works on empty repos.
-
     console.log(`[create-github] Checking if repository needs initialization...`);
 
-    // Small delay to ensure repo is ready after creation
     await new Promise(r => setTimeout(r, 1000));
 
-    // Check if repo is empty by trying to get the main branch
     const checkBranchResponse = await fetch(
       `${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`,
       { headers }
@@ -174,7 +170,6 @@ export async function POST(request: NextRequest) {
     if (!checkBranchResponse.ok) {
       console.log(`[create-github] Repository is empty, creating bootstrap commit...`);
 
-      // Repo is empty - create initial commit using contents API (works on empty repos)
       const bootstrapResponse = await fetch(
         `${GITHUB_API}/repos/${owner}/${repoName}/contents/.gitkeep`,
         {
@@ -194,8 +189,6 @@ export async function POST(request: NextRequest) {
       }
 
       console.log(`[create-github] Repository initialized with bootstrap commit`);
-
-      // Small delay to ensure commit is processed
       await new Promise(r => setTimeout(r, 500));
     } else {
       console.log(`[create-github] Repository already has commits, skipping bootstrap`);
@@ -227,17 +220,11 @@ export async function POST(request: NextRequest) {
     let processedCount = 0;
 
     for (const item of templateTree) {
-      // Skip directories
       if (item.type !== 'blob') continue;
-
-      // Skip excluded paths
       if (EXCLUDED_PATHS.some(excluded => item.path.startsWith(excluded))) continue;
-
-      // Skip large binary files
       if (item.size && item.size > 1000000) continue;
 
       try {
-        // Fetch file content
         const blobResponse = await fetch(item.url, { headers });
         if (!blobResponse.ok) continue;
 
@@ -247,7 +234,6 @@ export async function POST(request: NextRequest) {
         try {
           content = Buffer.from(blobData.content, 'base64').toString('utf-8');
         } catch {
-          // Skip binary files that can't be decoded
           continue;
         }
 
@@ -264,7 +250,6 @@ export async function POST(request: NextRequest) {
         filesToCreate.push({ path: item.path, content });
         processedCount++;
 
-        // Progress logging every 20 files
         if (processedCount % 20 === 0) {
           console.log(`[create-github] Processed ${processedCount} files...`);
         }
@@ -281,9 +266,8 @@ export async function POST(request: NextRequest) {
     console.log(`[create-github] Creating blobs...`);
 
     const treeItems: { path: string; mode: string; type: string; sha: string }[] = [];
-
-    // Process in batches to avoid rate limits
     const BATCH_SIZE = 10;
+
     for (let i = 0; i < filesToCreate.length; i += BATCH_SIZE) {
       const batch = filesToCreate.slice(i, i + BATCH_SIZE);
 
@@ -319,7 +303,6 @@ export async function POST(request: NextRequest) {
       const results = await Promise.all(blobPromises);
       treeItems.push(...results.filter((r): r is NonNullable<typeof r> => r !== null));
 
-      // Small delay between batches
       if (i + BATCH_SIZE < filesToCreate.length) {
         await new Promise(r => setTimeout(r, 100));
       }
@@ -328,7 +311,7 @@ export async function POST(request: NextRequest) {
     console.log(`[create-github] Created ${treeItems.length} blobs`);
 
     // ========================================================================
-    // STEP 5: Create tree (without base_tree to fully replace contents)
+    // STEP 5: Create tree
     // ========================================================================
     console.log(`[create-github] Creating tree...`);
 
@@ -346,11 +329,10 @@ export async function POST(request: NextRequest) {
     const newTree = await createTreeResponse.json();
 
     // ========================================================================
-    // STEP 6: Create commit (with parent from bootstrap if exists)
+    // STEP 6: Create commit
     // ========================================================================
     console.log(`[create-github] Creating commit...`);
 
-    // Get the current HEAD to use as parent
     let parentSha: string | undefined;
     const headResponse = await fetch(
       `${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`,
@@ -383,7 +365,6 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     console.log(`[create-github] Updating main branch...`);
 
-    // Since we bootstrapped, the ref already exists - update it
     const updateRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs/heads/main`, {
       method: 'PATCH',
       headers: { ...headers, 'Content-Type': 'application/json' },
@@ -391,7 +372,6 @@ export async function POST(request: NextRequest) {
     });
 
     if (!updateRefResponse.ok) {
-      // Fallback: try creating the ref
       const createRefResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repoName}/git/refs`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
@@ -455,10 +435,8 @@ function customizePackageJson(content: string, repoName: string, companyName: st
 }
 
 // ============================================================================
-// HELPER: Generate client config
+// HELPER: Generate client config - COMPLETE VERSION WITH LANDING
 // ============================================================================
-// NOTE: Copy your existing generateClientConfig function here (lines 360-674 from original)
-// I'm including a placeholder - replace with your actual implementation
 
 function generateClientConfig(
   branding: ExtractedBranding,
@@ -467,70 +445,362 @@ function generateClientConfig(
 ): string {
   const { company, colors, logo, thesis, contact, platformType } = branding;
   const isImpact = platformType === 'impact_investor';
+  const companyName = escapeString(company.name);
+  const tagline = escapeString(company.tagline || '');
 
-  // This is a simplified version - copy your full implementation from the original file
   return `// config/client.ts
-// Auto-generated client configuration
+// ============================================================================
+// CLIENT CONFIGURATION - Auto-generated by Setup Wizard
+// ============================================================================
 
 export const clientConfig = {
-  // Company
+  // ==========================================================================
+  // PLATFORM TYPE
+  // ==========================================================================
+  platformType: "${platformType}" as 'impact_investor' | 'commercial_investor' | 'family_office' | 'founder_service_provider',
+  platformMode: "${platformMode}" as 'screening' | 'coaching',
+
+  // ==========================================================================
+  // COMPANY INFORMATION
+  // ==========================================================================
   company: {
-    name: "${escapeString(company.name)}",
-    tagline: "${escapeString(company.tagline || '')}",
+    name: "${companyName}",
+    legalName: "${companyName}",
+    tagline: "${tagline}",
     description: "${escapeString(company.description || '')}",
     website: "${company.website || ''}",
+    platformUrl: "",
     supportEmail: "${contact.email || ''}",
+    salesEmail: "${contact.email || ''}",
+    social: {
+      linkedin: "${contact.linkedin || ''}",
+      twitter: "",
+      youtube: "",
+    },
+    logo: {
+      light: "/logo-light.svg",
+      dark: "/logo-dark.svg",
+      favicon: "/favicon.ico",
+    },
   },
 
-  // Platform Type & Mode
-  platformType: "${platformType}" as const,
-  platformMode: "${platformMode}" as const,
-
-  // Admin
+  // ==========================================================================
+  // ADMIN USER
+  // ==========================================================================
   admin: {
     firstName: "${escapeString(admin?.firstName || '')}",
     lastName: "${escapeString(admin?.lastName || '')}",
     email: "${admin?.email || ''}",
     phone: "${admin?.phone || ''}",
+    position: "CEO",
+    linkedIn: "",
   },
 
-  // Theme
+  // ==========================================================================
+  // OFFICE LOCATIONS
+  // ==========================================================================
+  offices: [
+    {
+      city: "Brisbane",
+      country: "Australia",
+      address: "Brisbane, Queensland",
+      phone: "${admin?.phone || ''}",
+      isPrimary: true,
+    },
+  ],
+
+  // ==========================================================================
+  // THEME & BRANDING
+  // ==========================================================================
   theme: {
+    mode: "dark" as "dark" | "light",
     colors: {
       primary: "${colors.primary || '#8B5CF6'}",
+      primaryHover: "${colors.primary || '#7C3AED'}",
       accent: "${colors.accent || '#10B981'}",
+      accentHover: "${colors.accent || '#059669'}",
       background: "${colors.background || '#0F172A'}",
+      surface: "#1E293B",
       text: "${colors.text || '#F8FAFC'}",
+      textMuted: "#94A3B8",
+      border: "#334155",
+      gradient: { from: "${colors.primary || '#8B5CF6'}", via: "${colors.background || '#0F172A'}", to: "${colors.accent || '#10B981'}" },
+      success: "#22C55E",
+      warning: "#F59E0B",
+      error: "#EF4444",
     },
+    gradients: {
+      hero: "from-purple-600 via-violet-700 to-indigo-800",
+      button: "from-purple-500 to-violet-600",
+      card: "from-slate-800 to-slate-900",
+    },
+    fonts: {
+      heading: "Inter",
+      body: "Inter",
+    },
+    borderRadius: "0.5rem",
   },
 
-  // Logo
-  logo: {
-    url: ${logo.url ? `"${logo.url}"` : 'null'},
-    favicon: ${logo.favicon ? `"${logo.favicon}"` : 'null'},
+  // ==========================================================================
+  // LANDING PAGE CONTENT
+  // ==========================================================================
+  landing: {
+    hero: {
+      headline: "Perfect Your Pitch with ${companyName}",
+      subHeadline: "${tagline || 'AI-powered coaching to help founders tell their story and connect with aligned investors.'}",
+      ctaText: "Start Your Pitch",
+      ctaLink: "/signup/founder",
+      secondaryCtaText: "For Investors",
+      secondaryCtaLink: "/signup/investor",
+    },
+    stats: [
+      { value: "500+", label: "Founders Coached" },
+      { value: "$50M+", label: "Capital Raised" },
+      { value: "85%", label: "Pitch Improvement" },
+      { value: "24h", label: "Response Time" },
+    ],
+    valueProps: [
+      {
+        icon: "Brain",
+        title: "AI Pitch Analysis",
+        description: "Get instant feedback on your pitch deck from our AI coaching system.",
+      },
+      {
+        icon: "Target",
+        title: "Investor Alignment",
+        description: "Match with investors whose thesis aligns with your business.",
+      },
+      {
+        icon: "TrendingUp",
+        title: "Track Progress",
+        description: "Watch your pitch scores improve over time with actionable insights.",
+      },
+      {
+        icon: "Mic",
+        title: "Voice Coaching",
+        description: "Practice your pitch with AI and get real-time feedback on delivery.",
+      },
+      {
+        icon: "Users",
+        title: "Expert Matching",
+        description: "Connect with investors who understand your market.",
+      },
+      {
+        icon: "Shield",
+        title: "Investor Ready Score",
+        description: "Know exactly where you stand before you pitch.",
+      },
+    ],
+    howItWorks: [
+      {
+        step: "1",
+        title: "Submit Your Pitch",
+        description: "Upload your deck and tell us about your business.",
+      },
+      {
+        step: "2",
+        title: "Get AI Coaching",
+        description: "Receive detailed analysis and improvement recommendations.",
+      },
+      {
+        step: "3",
+        title: "Practice & Improve",
+        description: "Use voice coaching to perfect your delivery.",
+      },
+      {
+        step: "4",
+        title: "Connect",
+        description: "When ready, get introduced to aligned investors.",
+      },
+    ],
   },
 
-  // Investment Thesis
+  // ==========================================================================
+  // INVESTMENT THESIS
+  // ==========================================================================
   thesis: {
     focusAreas: ${JSON.stringify(thesis.focusAreas || ['Technology', 'Healthcare', 'Climate'])},
     sectors: ${JSON.stringify(thesis.sectors || ['Technology', 'Healthcare', 'FinTech'])},
     stages: ${JSON.stringify(thesis.stages || ['Pre-Seed', 'Seed', 'Series A'])},
+    geographies: ["Global", "Asia-Pacific", "North America", "Europe"],
+    ticketSize: {
+      min: "$100K",
+      max: "$2M",
+      sweet: "$500K",
+    },
     philosophy: "${escapeString(thesis.philosophy || '')}",
     idealFounder: "${escapeString(thesis.idealFounder || '')}",
     scoringFocus: "${isImpact ? 'impact' : 'growth'}" as "storytelling" | "impact" | "growth",
+    scoringCriteria: [
+      { key: "problem_clarity", label: "Problem Clarity", weight: 0.10 },
+      { key: "solution_clarity", label: "Solution Clarity", weight: 0.10 },
+      { key: "market_opportunity", label: "Market Opportunity", weight: 0.08 },
+      { key: "business_model", label: "Business Model", weight: 0.10 },
+      { key: "traction", label: "Traction & Validation", weight: 0.08 },
+      { key: "team", label: "Team & Execution", weight: 0.08 },
+      { key: "financials", label: "Financial Projections", weight: 0.06 },
+      { key: "ask_clarity", label: "Ask & Use of Funds", weight: 0.06 },
+      { key: "sdg_alignment", label: "SDG Alignment", weight: ${isImpact ? '0.12' : '0.08'} },
+      { key: "impact_measurability", label: "Impact Measurability", weight: ${isImpact ? '0.12' : '0.08'} },
+      { key: "theory_of_change", label: "Theory of Change", weight: 0.05 },
+      { key: "storytelling", label: "Storytelling", weight: 0.05 },
+    ],
+    welcomeMessages: {
+      discovery: "Welcome to ${companyName} Story Discovery! I'll help you uncover the compelling narrative behind your startup.",
+      practice: "Ready to practice your pitch? I'll give you real-time feedback to sharpen your delivery.",
+      simulation: "Let's simulate an investor meeting. I'll play different investor types to prepare you.",
+    },
   },
 
-  // Platform Features
+  // ==========================================================================
+  // COACHING
+  // ==========================================================================
+  coaching: {
+    coachName: "Maya",
+    coachPersonality: "friendly and supportive",
+    voiceId: "",
+    agentId: "",
+  },
+
+  // ==========================================================================
+  // PLATFORM SETTINGS
+  // ==========================================================================
   platform: {
+    urlPrefix: "portal",
+    adminRole: "portal_admin",
     features: {
       voiceCoaching: true,
-      investorMatching: true,
+      investorMatching: ${platformType !== 'founder_service_provider'},
+      deckVersioning: true,
+      teamMembers: false,
+      analytics: true,
+      apiAccess: false,
       sdgScoring: ${isImpact},
       impactMetrics: ${isImpact},
+      blendedReturns: ${isImpact},
     },
+    founderJourney: [
+      { id: "upload", label: "Upload Deck", icon: "Upload" },
+      { id: "profile", label: "Complete Profile", icon: "User" },
+      { id: "discovery", label: "Story Discovery", icon: "MessageSquare" },
+      { id: "refine", label: "Refine Materials", icon: "FileEdit" },
+      { id: "practice", label: "Practice Pitch", icon: "Mic" },
+    ],
+    readinessLevels: [
+      { key: "not-ready", label: "Not Ready", minScore: 0, color: "red" },
+      { key: "needs-work", label: "Needs Work", minScore: 40, color: "orange" },
+      { key: "almost-ready", label: "Almost Ready", minScore: 60, color: "yellow" },
+      { key: "investor-ready", label: "Investor Ready", minScore: 80, color: "green" },
+    ],
+    autoReplyTemplate: \`
+Thank you for submitting your pitch to ${companyName}!
+
+We've received your deck and our AI coaching system is analyzing it now.
+You'll receive your initial feedback within 24 hours.
+
+Best regards,
+The ${companyName} Team
+    \`,
+  },
+
+  // ==========================================================================
+  // FOOTER CONTENT
+  // ==========================================================================
+  footer: {
+    description: "${tagline || 'AI-powered pitch coaching platform.'}",
+    serviceLinks: [
+      { label: "For Founders", href: "/signup/founder" },
+      { label: "For Investors", href: "/signup/investor" },
+      { label: "Pricing", href: "/pricing" },
+    ],
+    companyLinks: [
+      { label: "About", href: "/about" },
+      { label: "How It Works", href: "/#how-it-works" },
+      { label: "Contact", href: "/contact" },
+    ],
+    legalLinks: [
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms of Service", href: "/terms" },
+    ],
+    copyright: "© {year} ${companyName}. All rights reserved.",
+  },
+
+  // ==========================================================================
+  // LEGAL & COMPLIANCE
+  // ==========================================================================
+  legal: {
+    privacyUrl: "/privacy",
+    termsUrl: "/terms",
+    copyrightYear: new Date().getFullYear(),
+    complianceRegions: ["GDPR", "CCPA"],
+  },
+
+  // ==========================================================================
+  // EXTERNAL SERVICE IDS
+  // ==========================================================================
+  services: {
+    supabase: {
+      projectId: "",
+      url: "",
+    },
+    vercel: {
+      projectId: "",
+      deploymentUrl: "",
+    },
+    elevenlabs: {
+      agentId: "",
+      voiceId: "",
+    },
+    anthropic: {},
   },
 };
 
+// ==========================================================================
+// HELPER FUNCTIONS
+// ==========================================================================
+
+export const getCompanyName = () => clientConfig.company.name;
+
+export const getAdminName = () =>
+  \`\${clientConfig.admin.firstName} \${clientConfig.admin.lastName}\`;
+
+export const getAdminRole = () => clientConfig.platform.adminRole;
+
+export const getUrlPrefix = () => clientConfig.platform.urlPrefix;
+
+export const getCoachName = () => clientConfig.coaching.coachName;
+
+export const getPortalRoute = (path: string) =>
+  \`/\${clientConfig.platform.urlPrefix}\${path}\`;
+
+export const getThemeColor = (color: keyof typeof clientConfig.theme.colors) =>
+  clientConfig.theme.colors[color];
+
+export const replaceTemplateVars = (text: string): string => {
+  return text
+    .replace(/{company}/g, clientConfig.company.name)
+    .replace(/{coach}/g, clientConfig.coaching.coachName)
+    .replace(/{year}/g, String(clientConfig.legal.copyrightYear))
+    .replace(/{admin}/g, getAdminName())
+    .replace(/{email}/g, clientConfig.company.supportEmail);
+};
+
+export const isFeatureEnabled = (feature: keyof typeof clientConfig.platform.features) =>
+  clientConfig.platform.features[feature];
+
+export const getPlatformType = () => clientConfig.platformType;
+export const isServiceProvider = () => clientConfig.platformType === 'founder_service_provider';
+export const isImpactInvestor = () => clientConfig.platformType === 'impact_investor';
+export const isFamilyOffice = () => clientConfig.platformType === 'family_office';
+export const isCommercialInvestor = () => clientConfig.platformType === 'commercial_investor';
+export const hasInvestorMatching = () =>
+  clientConfig.platform.features.investorMatching && !isServiceProvider();
+export const hasSDGScoring = () =>
+  isImpactInvestor() && clientConfig.platform.features.sdgScoring;
+export const isScreeningMode = () => clientConfig.platformMode === 'screening';
+export const isCoachingMode = () => clientConfig.platformMode === 'coaching';
+
+export type ClientConfig = typeof clientConfig;
 export default clientConfig;
 `;
 }
