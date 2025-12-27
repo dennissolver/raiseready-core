@@ -1,6 +1,7 @@
 'use client';
-import { clientConfig } from '@/config';
+// app/portal/dashboard/page.tsx
 
+import { clientConfig } from '@/config';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
@@ -28,6 +29,13 @@ import { useAuth } from '@/hooks/use-auth';
 export default function PortalDashboard() {
   const router = useRouter();
   const supabase = createClient();
+
+  // Get config-driven labels
+  const { company, platformTypeConfig } = clientConfig;
+  const ownerLabel = platformTypeConfig?.ownerLabel || 'Investor';
+  const thesisLabel = platformTypeConfig?.thesisLabel || 'Investment Thesis';
+  const founderLabel = platformTypeConfig?.founderLabel || 'Founder';
+  const matchActionLabel = platformTypeConfig?.matchActionLabel || 'Invest';
 
   const { isLoading: authLoading, user } = useAuth({
     requireAuth: true,
@@ -138,14 +146,14 @@ export default function PortalDashboard() {
       <header className="bg-white border-b">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-primary">" + clientConfig.company.name + " Admin</h1>
+            <h1 className="text-2xl font-bold text-primary">{company.name} Admin</h1>
             <p className="text-sm text-muted-foreground">Welcome back, {user?.email}</p>
           </div>
           <div className="flex gap-2">
             <Link href="/portal/thesis">
               <Button variant="outline" size="sm" className="gap-2">
                 <Edit className="w-4 h-4" />
-                Edit Thesis
+                Edit {thesisLabel}
               </Button>
             </Link>
             <Button
@@ -225,7 +233,7 @@ export default function PortalDashboard() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Thesis Status</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">{thesisLabel} Status</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-3xl font-bold">{profileCompletion}%</div>
@@ -240,7 +248,7 @@ export default function PortalDashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Target className="w-5 h-5 text-amber-600" />
-                    Configure Your Investment Thesis
+                    Configure Your {thesisLabel}
                   </CardTitle>
                   <CardDescription>
                     Set up your criteria to enable AI-powered matching with incoming pitches
@@ -249,14 +257,14 @@ export default function PortalDashboard() {
                 <CardContent>
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium">Thesis Completion</span>
+                      <span className="text-sm font-medium">{thesisLabel} Completion</span>
                       <span className="text-sm font-bold text-amber-600">{profileCompletion}%</span>
                     </div>
                     <Progress value={profileCompletion} className="h-2" />
                   </div>
                   <div className="flex gap-3">
                     <Link href="/portal/thesis">
-                      <Button>Complete Thesis Setup</Button>
+                      <Button>Complete {thesisLabel} Setup</Button>
                     </Link>
                     <Link href="/portal/discovery">
                       <Button variant="outline" className="gap-2">
@@ -275,7 +283,7 @@ export default function PortalDashboard() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle>Recent Submissions</CardTitle>
-                    <CardDescription>Latest pitch decks from founders</CardDescription>
+                    <CardDescription>Latest pitch decks from {founderLabel.toLowerCase()}s</CardDescription>
                   </div>
                   <Button variant="outline" size="sm" onClick={() => setActiveTab('submissions')}>
                     View All
@@ -319,7 +327,7 @@ export default function PortalDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>All Pitch Submissions</CardTitle>
-                <CardDescription>Review and manage incoming founder pitches</CardDescription>
+                <CardDescription>Review and manage incoming {founderLabel.toLowerCase()} pitches</CardDescription>
               </CardHeader>
               <CardContent>
                 {submissions.length === 0 ? (
@@ -327,7 +335,7 @@ export default function PortalDashboard() {
                     <Inbox className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
                     <h3 className="text-lg font-semibold mb-2">No submissions yet</h3>
                     <p className="text-sm text-muted-foreground">
-                      Founders will appear here when they submit their pitch decks
+                      {founderLabel}s will appear here when they submit their pitch decks
                     </p>
                   </div>
                 ) : (
@@ -372,15 +380,15 @@ export default function PortalDashboard() {
           <TabsContent value="shortlist" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Shortlisted Founders</CardTitle>
-                <CardDescription>Founders you've marked for follow-up</CardDescription>
+                <CardTitle>Shortlisted {founderLabel}s</CardTitle>
+                <CardDescription>{founderLabel}s you've marked for follow-up</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="text-center py-12">
                   <Users className="w-12 h-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                  <h3 className="text-lg font-semibold mb-2">No shortlisted founders yet</h3>
+                  <h3 className="text-lg font-semibold mb-2">No shortlisted {founderLabel.toLowerCase()}s yet</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Review submissions and add founders to your shortlist
+                    Review submissions and add {founderLabel.toLowerCase()}s to your shortlist
                   </p>
                   <Button variant="outline" onClick={() => setActiveTab('submissions')}>
                     Browse Submissions

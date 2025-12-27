@@ -1,7 +1,7 @@
 // app/page.tsx
 // ============================================================================
 // UNIFIED LANDING PAGE
-// - Master platform (RaiseReady Impact) → Shows 4-type selector
+// - Master platform (RaiseReady Impact) → Shows 6-type selector
 // - White-label deployments → Shows customized landing from clientConfig
 // ============================================================================
 
@@ -9,12 +9,13 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import {
   ArrowRight, Mic, FileText, Target, Sparkles, Brain, TrendingUp,
-  Heart, Users, GraduationCap, Zap, Globe, Shield, CheckCircle
+  Heart, Users, GraduationCap, Zap, Globe, Shield, CheckCircle,
+  Rocket, Building2
 } from 'lucide-react';
 import { clientConfig } from '@/config/client';
 
 // ============================================================================
-// MASTER PLATFORM TYPES (for 4-type selector)
+// MASTER PLATFORM TYPES (6 types)
 // ============================================================================
 
 const PLATFORM_TYPES = [
@@ -33,12 +34,12 @@ const PLATFORM_TYPES = [
       'Theory of Change Analysis',
     ],
     founderType: 'Impact Founders',
-    investorType: 'Impact Investors',
+    ownerType: 'Impact Investors',
   },
   {
-    type: 'commercial_investor',
+    type: 'commercial_vc',
     title: 'Commercial VC',
-    subtitle: 'For VCs & Growth Investors',
+    subtitle: 'For VCs, PE & Angel Investors',
     description: 'Screen founders on growth metrics, market opportunity, and unit economics. Coach founders on ARR, traction, and investor-ready financials.',
     icon: TrendingUp,
     gradient: 'from-purple-500 to-violet-600',
@@ -50,7 +51,7 @@ const PLATFORM_TYPES = [
       'Deal Flow Management',
     ],
     founderType: 'Growth Founders',
-    investorType: 'VCs & Angels',
+    ownerType: 'VCs & Angels',
   },
   {
     type: 'family_office',
@@ -58,8 +59,8 @@ const PLATFORM_TYPES = [
     subtitle: 'For Patient Capital & Values-Aligned Investing',
     description: 'Screen founders for long-term value creation, mission alignment, and reputation fit. Coach founders on generational thinking and values articulation.',
     icon: Users,
-    gradient: 'from-blue-500 to-indigo-600',
-    hoverGradient: 'hover:from-blue-600 hover:to-indigo-700',
+    gradient: 'from-amber-500 to-orange-600',
+    hoverGradient: 'hover:from-amber-600 hover:to-orange-700',
     features: [
       'Values Alignment Scoring',
       'Legacy Priority Matching',
@@ -67,16 +68,50 @@ const PLATFORM_TYPES = [
       'Reputation Risk Assessment',
     ],
     founderType: 'Mission-Driven Founders',
-    investorType: 'Family Principals',
+    ownerType: 'Family Principals',
   },
   {
-    type: 'founder_service_provider',
-    title: 'Founder Service Provider',
-    subtitle: 'For Law Firms, Accelerators & Consultancies',
-    description: 'Provide AI pitch coaching as a value-add service to your startup clients. No investor matching - pure coaching and improvement tracking.',
+    type: 'accelerator',
+    title: 'Accelerator',
+    subtitle: 'For Accelerators & Incubators',
+    description: 'Screen applicants for coachability and program fit. Prepare founders for demo day with stage-appropriate pitch coaching and cohort management.',
+    icon: Rocket,
+    gradient: 'from-blue-500 to-indigo-600',
+    hoverGradient: 'hover:from-blue-600 hover:to-indigo-700',
+    features: [
+      'Cohort Management',
+      'Coachability Scoring',
+      'Demo Day Preparation',
+      'Stage-Appropriate Coaching',
+    ],
+    founderType: 'Program Applicants',
+    ownerType: 'Program Directors',
+  },
+  {
+    type: 'corporate_innovation',
+    title: 'Corporate Innovation',
+    subtitle: 'For Corporate Ventures & Innovation Labs',
+    description: 'Screen startups for strategic fit and enterprise readiness. Coach founders on partnership positioning and corporate integration.',
+    icon: Building2,
+    gradient: 'from-rose-500 to-pink-600',
+    hoverGradient: 'hover:from-rose-600 hover:to-pink-700',
+    features: [
+      'Strategic Fit Analysis',
+      'Enterprise Readiness Scoring',
+      'Partnership Potential',
+      'Integration Assessment',
+    ],
+    founderType: 'Startup Partners',
+    ownerType: 'Innovation Leads',
+  },
+  {
+    type: 'founder_services',
+    title: 'Founder Services',
+    subtitle: 'For Law Firms, Advisors & Consultancies',
+    description: 'Provide AI pitch coaching as a value-add service to your startup clients. Pure coaching and improvement tracking with no investor matching.',
     icon: GraduationCap,
-    gradient: 'from-amber-500 to-orange-600',
-    hoverGradient: 'hover:from-amber-600 hover:to-orange-700',
+    gradient: 'from-slate-500 to-gray-600',
+    hoverGradient: 'hover:from-slate-600 hover:to-gray-700',
     features: [
       'Pitch Quality Scoring',
       'AI Coaching Sessions',
@@ -84,7 +119,7 @@ const PLATFORM_TYPES = [
       'Client Portfolio Management',
     ],
     founderType: 'Your Startup Clients',
-    investorType: null,
+    ownerType: null,
   },
 ];
 
@@ -159,7 +194,7 @@ function MasterPlatformSelector() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {PLATFORM_TYPES.map((platform) => {
               const Icon = platform.icon;
               return (
@@ -168,51 +203,39 @@ function MasterPlatformSelector() {
                   href={`/setup?type=${platform.type}`}
                   className="group"
                 >
-                  <div className="h-full p-8 bg-slate-900 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/5">
-                    <div className="flex items-start gap-4 mb-6">
-                      <div className={`p-4 rounded-xl bg-gradient-to-br ${platform.gradient} ${platform.hoverGradient} transition-all group-hover:scale-110`}>
-                        <Icon className="w-8 h-8 text-white" />
+                  <div className="h-full p-6 bg-slate-900 rounded-2xl border border-slate-800 hover:border-slate-700 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/5">
+                    <div className="flex items-start gap-3 mb-4">
+                      <div className={`p-3 rounded-xl bg-gradient-to-br ${platform.gradient} ${platform.hoverGradient} transition-all group-hover:scale-110`}>
+                        <Icon className="w-6 h-6 text-white" />
                       </div>
                       <div>
-                        <h3 className="text-2xl font-bold text-white group-hover:text-purple-300 transition-colors">
+                        <h3 className="text-xl font-bold text-white group-hover:text-purple-300 transition-colors">
                           {platform.title}
                         </h3>
-                        <p className="text-gray-400">{platform.subtitle}</p>
+                        <p className="text-sm text-gray-400">{platform.subtitle}</p>
                       </div>
                     </div>
 
-                    <p className="text-gray-300 mb-6">
+                    <p className="text-gray-300 text-sm mb-4 line-clamp-2">
                       {platform.description}
                     </p>
 
-                    <div className="grid grid-cols-2 gap-2 mb-6">
+                    <div className="grid grid-cols-2 gap-1 mb-4">
                       {platform.features.map((feature, i) => (
-                        <div key={i} className="flex items-center gap-2 text-sm text-gray-400">
+                        <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
                           <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${platform.gradient}`} />
                           {feature}
                         </div>
                       ))}
                     </div>
 
-                    <div className="flex flex-wrap gap-3 mb-6">
-                      <span className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
-                        👤 {platform.founderType}
+                    <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                      <div className="text-xs text-gray-500">
+                        <span className="text-gray-400">{platform.founderType}</span>
+                      </div>
+                      <span className="text-sm text-purple-400 group-hover:text-purple-300 flex items-center gap-1">
+                        Get Started <ArrowRight className="w-4 h-4" />
                       </span>
-                      {platform.investorType && (
-                        <span className="px-3 py-1 bg-slate-800 rounded-full text-sm text-gray-300">
-                          💼 {platform.investorType}
-                        </span>
-                      )}
-                      {!platform.investorType && (
-                        <span className="px-3 py-1 bg-amber-500/20 border border-amber-500/30 rounded-full text-sm text-amber-300">
-                          Coaching Only
-                        </span>
-                      )}
-                    </div>
-
-                    <div className={`flex items-center gap-2 text-transparent bg-gradient-to-r ${platform.gradient} bg-clip-text font-semibold group-hover:gap-4 transition-all`}>
-                      Create {platform.title} Platform
-                      <ArrowRight className="w-5 h-5 text-gray-400 group-hover:translate-x-2 transition-transform" />
                     </div>
                   </div>
                 </Link>
@@ -223,78 +246,50 @@ function MasterPlatformSelector() {
       </section>
 
       {/* How It Works */}
-      <section className="py-20 bg-slate-900">
+      <section className="py-20 bg-slate-900/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold mb-4">
-              Launch in Minutes, Not Months
+              Launch in 4 Simple Steps
             </h2>
-            <p className="text-gray-400">
-              From selection to live platform in under 10 minutes
+            <p className="text-gray-400 max-w-2xl mx-auto">
+              From selection to deployment in under 5 minutes
             </p>
           </div>
 
           <div className="grid md:grid-cols-4 gap-8">
             {[
-              { step: '1', title: 'Choose Type', description: 'Select the platform type that matches your investment approach or service model.' },
-              { step: '2', title: 'Enter Details', description: "Add your company info, branding, and we'll extract your thesis from your website." },
-              { step: '3', title: 'Configure AI', description: 'Set up your AI voice coach personality and scoring criteria.' },
-              { step: '4', title: 'Go Live', description: 'We create your Supabase, GitHub, Vercel, and ElevenLabs resources automatically.' },
-            ].map((item, index) => (
-              <div key={index} className="text-center">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-violet-600 flex items-center justify-center">
-                  <span className="text-2xl font-bold">{item.step}</span>
+              { step: '1', title: 'Choose Type', description: 'Select the platform type that matches your organization', icon: Target },
+              { step: '2', title: 'Add Branding', description: 'Enter your company URL and we extract your brand', icon: Sparkles },
+              { step: '3', title: 'Deploy', description: 'We create your database, repo, and live platform', icon: Zap },
+              { step: '4', title: 'Invite Founders', description: 'Share your platform URL and start screening', icon: Users },
+            ].map((item, i) => {
+              const Icon = item.icon;
+              return (
+                <div key={i} className="text-center">
+                  <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center mx-auto mb-4">
+                    <Icon className="w-8 h-8 text-purple-400" />
+                  </div>
+                  <div className="text-sm text-purple-400 mb-2">Step {item.step}</div>
+                  <h3 className="font-semibold text-lg mb-2">{item.title}</h3>
+                  <p className="text-sm text-gray-400">{item.description}</p>
                 </div>
-                <h3 className="text-xl font-semibold mb-2">{item.title}</h3>
-                <p className="text-gray-400">{item.description}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>
 
-      {/* What Gets Created */}
-      <section className="py-20 bg-slate-950">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">What You Get</h2>
-            <p className="text-gray-400">A complete, production-ready platform with everything configured</p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            {[
-              { title: 'Isolated Infrastructure', items: ['Dedicated Supabase database', 'Private GitHub repository', 'Vercel deployment', 'Custom domain support'] },
-              { title: 'AI Coaching System', items: ['Custom ElevenLabs voice agent', 'Pitch analysis engine', 'Discovery sessions', 'Practice simulations'] },
-              { title: 'Platform Features', items: ['Founder portal', 'Investor dashboard', 'Deck upload & analysis', 'Progress tracking'] },
-            ].map((column, i) => (
-              <div key={i} className="p-6 bg-slate-900 rounded-xl border border-slate-800">
-                <h3 className="text-xl font-semibold mb-4">{column.title}</h3>
-                <ul className="space-y-3">
-                  {column.items.map((item, j) => (
-                    <li key={j} className="flex items-center gap-2 text-gray-300">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-br from-purple-900/50 via-slate-900 to-violet-900/50">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
-            Ready to Launch Your Platform?
-          </h2>
+      {/* CTA */}
+      <section className="py-20 bg-gradient-to-r from-purple-900/50 to-pink-900/50">
+        <div className="max-w-4xl mx-auto px-4 text-center">
+          <h2 className="text-4xl font-bold mb-6">Ready to Launch Your Platform?</h2>
           <p className="text-xl text-gray-300 mb-8">
-            Choose your platform type above or go straight to setup.
+            Join investors who are screening smarter, not harder.
           </p>
-          <Link href="/setup">
-            <Button size="lg" className="bg-gradient-to-r from-purple-500 to-violet-600 hover:from-purple-600 hover:to-violet-700 text-white px-8 py-6 text-lg">
-              Start Setup Wizard
+          <Link href="#platform-types">
+            <Button size="lg" className="bg-white text-slate-900 hover:bg-gray-100 px-8">
+              Choose Your Platform Type
               <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
           </Link>
@@ -303,22 +298,14 @@ function MasterPlatformSelector() {
 
       {/* Footer */}
       <footer className="py-12 bg-slate-950 border-t border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-purple-400" />
-              <span className="font-bold">RaiseReady</span>
-              <span className="text-gray-500">by Global Buildtech Australia</span>
-            </div>
-            <div className="flex items-center gap-6 text-sm text-gray-400">
-              <Link href="/privacy" className="hover:text-white">Privacy</Link>
-              <Link href="/terms" className="hover:text-white">Terms</Link>
-              <Link href="/contact" className="hover:text-white">Contact</Link>
-            </div>
-            <div className="text-sm text-gray-500">
-              © {new Date().getFullYear()} RaiseReady. All rights reserved.
-            </div>
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <div className="flex items-center justify-center gap-2 mb-4">
+            <Sparkles className="w-5 h-5 text-purple-400" />
+            <span className="font-bold">RaiseReady</span>
           </div>
+          <p className="text-sm text-gray-500">
+            © {new Date().getFullYear()} Global Buildtech Australia × Corporate AI Solutions
+          </p>
         </div>
       </footer>
     </div>
@@ -326,230 +313,129 @@ function MasterPlatformSelector() {
 }
 
 // ============================================================================
-// WHITE-LABEL LANDING PAGE COMPONENT - Uses clientConfig.theme.colors
+// WHITE-LABEL LANDING (for deployed client platforms)
 // ============================================================================
 
 function WhiteLabelLanding() {
-  const companyName = clientConfig.company.name;
-  const tagline = clientConfig.company.tagline;
-  const websiteUrl = clientConfig.company.website;
+  const { company, theme, landing, footer } = clientConfig;
+  const { hero, valueProps, howItWorks, stats } = landing || {};
+  
+  const companyName = company?.name || 'Pitch Coach';
+  const tagline = company?.tagline || 'AI-Powered Pitch Coaching';
+  const websiteUrl = company?.website || '#';
+  const footerDescription = footer?.description || tagline;
 
-  // Dynamic colors from clientConfig
-  const primaryColor = clientConfig.theme.colors.primary;
-  const accentColor = clientConfig.theme.colors.accent;
-  const backgroundColor = clientConfig.theme.colors.background;
-  const surfaceColor = clientConfig.theme.colors.surface;
-  const textColor = clientConfig.theme.colors.text;
-  const textMuted = clientConfig.theme.colors.textMuted;
-  const borderColor = clientConfig.theme.colors.border;
+  // Theme colors
+  const primaryColor = theme?.colors?.primary || '#8B5CF6';
+  const accentColor = theme?.colors?.accent || '#10B981';
+  const backgroundColor = theme?.colors?.background || '#0F172A';
+  const textColor = theme?.colors?.text || '#F8FAFC';
+  const textMuted = '#94A3B8';
+  const surfaceColor = '#1E293B';
+  const borderColor = '#334155';
 
-  const heroHeadline = clientConfig.landing.hero.headline;
-  const heroSubHeadline = clientConfig.landing.hero.subHeadline;
-  const ctaText = clientConfig.landing.hero.ctaText;
-  const ctaLink = clientConfig.landing.hero.ctaLink;
-  const secondaryCtaText = clientConfig.landing.hero.secondaryCtaText;
-  const secondaryCtaLink = clientConfig.landing.hero.secondaryCtaLink;
-  const stats = clientConfig.landing.stats;
-  const valueProps = clientConfig.landing.valueProps;
-  const howItWorks = clientConfig.landing.howItWorks;
-  const footerDescription = clientConfig.footer.description;
-
-  const iconMap: Record<string, React.ReactNode> = {
-    Brain: <Brain className="w-7 h-7" style={{ color: primaryColor }} />,
-    Target: <Target className="w-7 h-7" style={{ color: accentColor }} />,
-    TrendingUp: <TrendingUp className="w-7 h-7" style={{ color: accentColor }} />,
-    FileText: <FileText className="w-7 h-7" style={{ color: primaryColor }} />,
-    Mic: <Mic className="w-7 h-7" style={{ color: primaryColor }} />,
-    Users: <Users className="w-7 h-7" style={{ color: primaryColor }} />,
-    Shield: <Shield className="w-7 h-7" style={{ color: accentColor }} />,
-    CheckCircle: <CheckCircle className="w-7 h-7" style={{ color: accentColor }} />,
-    Sparkles: <Sparkles className="w-7 h-7" style={{ color: primaryColor }} />,
+  // Icons for value props
+  const iconMap: Record<string, any> = {
+    Brain, Target, TrendingUp, Mic, Users, Shield, FileText, Sparkles,
+    Heart, Globe, CheckCircle, Zap, GraduationCap
   };
 
   return (
     <div className="min-h-screen" style={{ backgroundColor, color: textColor }}>
       {/* Navigation */}
       <nav
-        className="fixed top-0 left-0 right-0 z-50 backdrop-blur-sm"
-        style={{
-          backgroundColor: `${backgroundColor}CC`,
-          borderBottom: `1px solid ${borderColor}`
-        }}
+        className="fixed top-0 w-full z-50 backdrop-blur-lg"
+        style={{ backgroundColor: `${backgroundColor}CC`, borderBottom: `1px solid ${borderColor}` }}
       >
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="text-2xl font-bold" style={{ color: textColor }}>
+        <div className="container mx-auto px-6 py-4 flex justify-between items-center">
+          <Link href="/" className="text-2xl font-bold" style={{ color: primaryColor }}>
             {companyName}
           </Link>
-          <div className="hidden md:flex items-center gap-8">
-            <Link
-              href={websiteUrl}
-              className="text-sm transition-colors hover:opacity-80"
-              style={{ color: textMuted }}
-            >
-              About Us
+          <div className="flex items-center gap-4">
+            <Link href="#how-it-works" className="text-sm transition-colors" style={{ color: textMuted }}>
+              How It Works
             </Link>
             <Link href="/login">
-              <Button
-                variant="outline"
-                style={{
-                  borderColor: borderColor,
-                  color: textColor,
-                }}
-                className="hover:opacity-80"
-              >
-                Sign In
+              <Button variant="outline" size="sm" style={{ borderColor, color: textColor }}>
+                Login
               </Button>
             </Link>
             <Link href="/signup/founder">
-              <Button
-                style={{ backgroundColor: primaryColor, color: '#ffffff' }}
-                className="hover:opacity-90"
-              >
+              <Button size="sm" style={{ backgroundColor: primaryColor }}>
                 Get Started
-              </Button>
-            </Link>
-          </div>
-          {/* Mobile menu button */}
-          <div className="md:hidden flex items-center gap-4">
-            <Link href="/login">
-              <Button
-                variant="outline"
-                size="sm"
-                style={{ borderColor: borderColor, color: textColor }}
-              >
-                Sign In
               </Button>
             </Link>
           </div>
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
-        {/* Background gradient using theme colors */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `linear-gradient(135deg, ${primaryColor}20 0%, ${backgroundColor} 50%, ${accentColor}20 100%)`
-          }}
-        />
-
-        {/* Grid pattern overlay */}
-        <div className="absolute inset-0 opacity-10" style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-        }} />
-
-        <div className="container mx-auto px-6 relative z-10">
-          <div className="max-w-4xl">
-            <p className="mb-4 text-lg" style={{ color: textMuted }}>{tagline}</p>
-
-            <h1 className="text-5xl md:text-7xl font-bold leading-tight mb-6" style={{ color: textColor }}>
-              {heroHeadline}
-            </h1>
-
-            <p className="text-xl mb-8 max-w-2xl" style={{ color: textMuted }}>
-              {heroSubHeadline}
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Link href={ctaLink}>
-                <Button
-                  size="lg"
-                  style={{ backgroundColor: primaryColor, color: '#ffffff' }}
-                  className="hover:opacity-90 px-8 py-6 text-lg"
-                >
-                  {ctaText}
-                  <ArrowRight className="ml-2 w-5 h-5" />
-                </Button>
-              </Link>
-              {secondaryCtaText && (
-                <Link href={secondaryCtaLink || '/login'}>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    style={{ borderColor: borderColor, color: textColor }}
-                    className="hover:opacity-80 px-8 py-6 text-lg"
-                  >
-                    {secondaryCtaText}
-                  </Button>
-                </Link>
-              )}
-            </div>
+      {/* Hero */}
+      <section
+        className="pt-32 pb-20"
+        style={{
+          background: `linear-gradient(to bottom right, ${backgroundColor}, ${primaryColor}20, ${backgroundColor})`
+        }}
+      >
+        <div className="container mx-auto px-6 text-center">
+          <h1 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
+            {hero?.headline || `Perfect Your Pitch with ${companyName}`}
+          </h1>
+          <p className="text-xl md:text-2xl mb-8 max-w-3xl mx-auto" style={{ color: textMuted }}>
+            {hero?.subHeadline || tagline}
+          </p>
+          <div className="flex flex-wrap gap-4 justify-center">
+            <Link href={hero?.ctaLink || '/signup/founder'}>
+              <Button size="lg" className="px-8" style={{ backgroundColor: primaryColor }}>
+                {hero?.ctaText || 'Start Your Pitch'}
+                <ArrowRight className="ml-2 w-5 h-5" />
+              </Button>
+            </Link>
+            <Link href={hero?.secondaryCtaLink || '/signup/investor'}>
+              <Button size="lg" variant="outline" className="px-8" style={{ borderColor, color: textColor }}>
+                {hero?.secondaryCtaText || 'For Investors'}
+              </Button>
+            </Link>
           </div>
         </div>
-
-        {/* Floating stats */}
-        {stats && stats.length > 0 && (
-          <div className="absolute bottom-20 right-10 hidden lg:block">
-            <div
-              className="backdrop-blur-sm rounded-2xl p-6"
-              style={{
-                backgroundColor: `${surfaceColor}80`,
-                border: `1px solid ${borderColor}`
-              }}
-            >
-              <div className="text-4xl font-bold" style={{ color: primaryColor }}>
-                {stats[1]?.value || stats[0]?.value}
-              </div>
-              <div style={{ color: textMuted }}>{stats[1]?.label || stats[0]?.label}</div>
-            </div>
-          </div>
-        )}
       </section>
 
       {/* Value Props */}
-      <section
-        className="py-24"
-        style={{
-          background: `linear-gradient(180deg, ${backgroundColor} 0%, ${surfaceColor} 100%)`
-        }}
-      >
-        <div className="container mx-auto px-6">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: textColor }}>
-              Your Vision.<br />
-              Our Expertise.<br />
-              <span style={{ color: primaryColor }}>
-                Infinite Possibilities.
-              </span>
-            </h2>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {valueProps.map((prop, i) => (
-              <div
-                key={i}
-                className="rounded-2xl p-8 transition-all hover:scale-105"
-                style={{
-                  backgroundColor: `${surfaceColor}80`,
-                  border: `1px solid ${borderColor}`
-                }}
-              >
-                <div
-                  className="w-14 h-14 rounded-xl flex items-center justify-center mb-6"
-                  style={{ backgroundColor: `${primaryColor}20` }}
-                >
-                  {iconMap[prop.icon] || <Brain className="w-7 h-7" style={{ color: primaryColor }} />}
-                </div>
-                <h3 className="text-xl font-semibold mb-3" style={{ color: textColor }}>{prop.title}</h3>
-                <p style={{ color: textMuted }}>{prop.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Stats Section */}
-      {stats && stats.length > 0 && (
+      {valueProps && valueProps.length > 0 && (
         <section className="py-20" style={{ backgroundColor: surfaceColor }}>
           <div className="container mx-auto px-6">
+            <div className="text-center mb-16">
+              <h2 className="text-4xl font-bold mb-4">Why {companyName}?</h2>
+              <p style={{ color: textMuted }}>Everything you need to become investor-ready</p>
+            </div>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {valueProps.map((prop: any, i: number) => {
+                const Icon = iconMap[prop.icon] || Sparkles;
+                return (
+                  <div key={i} className="p-6 rounded-xl" style={{ backgroundColor, border: `1px solid ${borderColor}` }}>
+                    <div
+                      className="w-12 h-12 rounded-lg flex items-center justify-center mb-4"
+                      style={{ backgroundColor: `${primaryColor}20` }}
+                    >
+                      <Icon className="w-6 h-6" style={{ color: primaryColor }} />
+                    </div>
+                    <h3 className="text-xl font-semibold mb-2">{prop.title}</h3>
+                    <p style={{ color: textMuted }}>{prop.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Stats */}
+      {stats && stats.length > 0 && (
+        <section className="py-20" style={{ backgroundColor }}>
+          <div className="container mx-auto px-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-              {stats.map((stat, i) => (
+              {stats.map((stat: any, i: number) => (
                 <div key={i}>
-                  <div
-                    className="text-4xl md:text-5xl font-bold mb-2"
-                    style={{ color: i === 1 ? primaryColor : textColor }}
-                  >
+                  <div className="text-4xl md:text-5xl font-bold mb-2" style={{ color: i === 1 ? primaryColor : textColor }}>
                     {stat.value}
                   </div>
                   <div style={{ color: textMuted }}>{stat.label}</div>
@@ -561,15 +447,19 @@ function WhiteLabelLanding() {
       )}
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-24" style={{ backgroundColor }}>
+      <section id="how-it-works" className="py-24" style={{ backgroundColor: surfaceColor }}>
         <div className="container mx-auto px-6">
           <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold mb-4" style={{ color: textColor }}>How It Works</h2>
-            <p className="text-lg" style={{ color: textMuted }}>Your journey to becoming investor-ready</p>
+            <h2 className="text-4xl font-bold mb-4">How It Works</h2>
+            <p style={{ color: textMuted }}>Your journey to becoming investor-ready</p>
           </div>
-
-          <div className="grid md:grid-cols-3 lg:grid-cols-5 gap-4 max-w-6xl mx-auto">
-            {howItWorks.map((item, i) => (
+          <div className="grid md:grid-cols-4 gap-6 max-w-5xl mx-auto">
+            {(howItWorks || [
+              { step: '1', title: 'Submit', description: 'Upload your pitch deck' },
+              { step: '2', title: 'Analyze', description: 'Get AI-powered feedback' },
+              { step: '3', title: 'Practice', description: 'Refine with voice coaching' },
+              { step: '4', title: 'Connect', description: 'Match with investors' },
+            ]).map((item: any, i: number) => (
               <div key={i} className="text-center">
                 <div
                   className="w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 text-xl font-bold"
@@ -577,7 +467,7 @@ function WhiteLabelLanding() {
                 >
                   {item.step}
                 </div>
-                <h3 className="font-semibold mb-2" style={{ color: textColor }}>{item.title}</h3>
+                <h3 className="font-semibold mb-2">{item.title}</h3>
                 <p className="text-sm" style={{ color: textMuted }}>{item.description}</p>
               </div>
             ))}
@@ -585,26 +475,15 @@ function WhiteLabelLanding() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section
-        className="py-24"
-        style={{
-          background: `linear-gradient(to right, ${primaryColor}40, ${primaryColor}20)`
-        }}
-      >
+      {/* CTA */}
+      <section className="py-24" style={{ background: `linear-gradient(to right, ${primaryColor}40, ${primaryColor}20)` }}>
         <div className="container mx-auto px-6 text-center">
-          <h2 className="text-4xl md:text-5xl font-bold mb-6" style={{ color: textColor }}>
-            Ready to tell your story?
-          </h2>
+          <h2 className="text-4xl md:text-5xl font-bold mb-6">Ready to tell your story?</h2>
           <p className="text-xl mb-8 max-w-2xl mx-auto" style={{ color: textMuted }}>
-            Join founders who have transformed their pitches and raised successfully with {companyName}.
+            Join founders who have transformed their pitches with {companyName}.
           </p>
           <Link href="/signup/founder">
-            <Button
-              size="lg"
-              className="px-12 py-6 text-lg font-semibold hover:opacity-90"
-              style={{ backgroundColor: '#ffffff', color: backgroundColor }}
-            >
+            <Button size="lg" className="px-12 py-6 text-lg" style={{ backgroundColor: '#ffffff', color: backgroundColor }}>
               Start Your Journey
               <Sparkles className="ml-2 w-5 h-5" />
             </Button>
@@ -613,68 +492,43 @@ function WhiteLabelLanding() {
       </section>
 
       {/* Footer */}
-      <footer
-        className="py-16"
-        style={{
-          backgroundColor: surfaceColor,
-          borderTop: `1px solid ${borderColor}`
-        }}
-      >
+      <footer className="py-16" style={{ backgroundColor: surfaceColor, borderTop: `1px solid ${borderColor}` }}>
         <div className="container mx-auto px-6">
           <div className="grid md:grid-cols-4 gap-12 mb-12">
-            {/* Brand */}
             <div>
-              <div className="text-2xl font-bold mb-4" style={{ color: textColor }}>{companyName}</div>
+              <div className="text-2xl font-bold mb-4">{companyName}</div>
               <p className="text-sm" style={{ color: textMuted }}>{footerDescription}</p>
             </div>
-
-            {/* Services */}
             <div>
-              <h4 className="font-semibold mb-4" style={{ color: textColor }}>Services</h4>
+              <h4 className="font-semibold mb-4">Services</h4>
               <ul className="space-y-2 text-sm">
-                {clientConfig.footer.serviceLinks.map((link, i) => (
+                {(clientConfig.footer?.serviceLinks || []).map((link: any, i: number) => (
                   <li key={i}>
-                    <Link
-                      href={link.href}
-                      className="transition-colors hover:opacity-80"
-                      style={{ color: textMuted }}
-                    >
+                    <Link href={link.href} className="transition-colors hover:opacity-80" style={{ color: textMuted }}>
                       {link.label}
                     </Link>
                   </li>
                 ))}
               </ul>
             </div>
-
-            {/* Company */}
             <div>
-              <h4 className="font-semibold mb-4" style={{ color: textColor }}>Company</h4>
+              <h4 className="font-semibold mb-4">Company</h4>
               <ul className="space-y-2 text-sm">
-                {clientConfig.footer.companyLinks.map((link, i) => (
+                {(clientConfig.footer?.companyLinks || []).map((link: any, i: number) => (
                   <li key={i}>
-                    <Link
-                      href={link.href}
-                      className="transition-colors hover:opacity-80"
-                      style={{ color: textMuted }}
-                    >
+                    <Link href={link.href} className="transition-colors hover:opacity-80" style={{ color: textMuted }}>
                       {link.label}
                     </Link>
                   </li>
                 ))}
               </ul>
             </div>
-
-            {/* Legal */}
             <div>
-              <h4 className="font-semibold mb-4" style={{ color: textColor }}>Legal</h4>
+              <h4 className="font-semibold mb-4">Legal</h4>
               <ul className="space-y-2 text-sm">
-                {clientConfig.footer.legalLinks.map((link, i) => (
+                {(clientConfig.footer?.legalLinks || []).map((link: any, i: number) => (
                   <li key={i}>
-                    <Link
-                      href={link.href}
-                      className="transition-colors hover:opacity-80"
-                      style={{ color: textMuted }}
-                    >
+                    <Link href={link.href} className="transition-colors hover:opacity-80" style={{ color: textMuted }}>
                       {link.label}
                     </Link>
                   </li>
@@ -682,29 +536,19 @@ function WhiteLabelLanding() {
               </ul>
             </div>
           </div>
-
-          <div
-            className="pt-8 flex flex-col md:flex-row justify-between items-center"
-            style={{ borderTop: `1px solid ${borderColor}` }}
-          >
+          <div className="pt-8 flex flex-col md:flex-row justify-between items-center" style={{ borderTop: `1px solid ${borderColor}` }}>
             <p className="text-sm" style={{ color: textMuted }}>
               © {new Date().getFullYear()} {companyName}. All rights reserved.
             </p>
             <div className="flex gap-6 mt-4 md:mt-0">
-              <Link
-                href="/privacy"
-                className="text-sm transition-colors hover:opacity-80"
-                style={{ color: textMuted }}
-              >
+              <Link href="/privacy" className="text-sm transition-colors hover:opacity-80" style={{ color: textMuted }}>
                 Privacy Policy
               </Link>
-              <Link
-                href={websiteUrl}
-                className="text-sm transition-colors hover:opacity-80"
-                style={{ color: textMuted }}
-              >
-                {websiteUrl.replace('https://', '').replace('http://', '')}
-              </Link>
+              {websiteUrl && websiteUrl !== '#' && (
+                <Link href={websiteUrl} className="text-sm transition-colors hover:opacity-80" style={{ color: textMuted }}>
+                  {websiteUrl.replace('https://', '').replace('http://', '')}
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -714,11 +558,10 @@ function WhiteLabelLanding() {
 }
 
 // ============================================================================
-// MAIN PAGE COMPONENT - Detects context and renders appropriate version
+// MAIN PAGE COMPONENT
 // ============================================================================
 
 export default function HomePage() {
-  // Detect if this is the master platform or a white-label deployment
   const isMasterPlatform = clientConfig.company.name === 'RaiseReady Impact';
 
   if (isMasterPlatform) {

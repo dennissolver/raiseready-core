@@ -1,20 +1,25 @@
 'use client';
-import { clientConfig } from '@/config';
 // app/portal/dashboard/_components/sidebar.tsx
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Home, Users, Target, Inbox, Star, MessageSquare, Settings, LogOut } from 'lucide-react'
+import { Home, Users, Target, Inbox, Star, MessageSquare, Settings, LogOut, Sparkles } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { clientConfig } from '@/config';
 
 export function PortalSidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
+  
+  // Get config-driven labels
+  const { company, theme, platformTypeConfig } = clientConfig;
+  const ownerLabel = platformTypeConfig?.ownerLabel || 'Investor';
+  const thesisLabel = platformTypeConfig?.thesisLabel || 'Investment Thesis';
 
   const links = [
     { href: '/portal/dashboard', label: 'Dashboard', icon: Home },
-    { href: '/portal/thesis', label: 'Investment Thesis', icon: Target },
+    { href: '/portal/thesis', label: thesisLabel, icon: Target },
     { href: '/portal/discovery', label: 'AI Discovery', icon: MessageSquare },
     { href: '/portal/watchlist', label: 'Shortlist', icon: Star },
     { href: '/portal/profile', label: 'Settings', icon: Settings },
@@ -29,10 +34,21 @@ export function PortalSidebar() {
   return (
     <nav className="w-64 bg-white border-r min-h-screen p-6 flex flex-col">
       <div className="mb-8">
-        <Link href="/" className="text-xl font-bold text-primary">
-          investor
+        <Link href="/" className="flex items-center gap-2">
+          <div
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: `linear-gradient(to bottom right, ${theme.colors.primary}, ${theme.colors.accent})` }}
+          >
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <span
+            className="font-bold text-lg bg-clip-text text-transparent"
+            style={{ backgroundImage: `linear-gradient(to right, ${theme.colors.primary}, ${theme.colors.accent})` }}
+          >
+            {company.name}
+          </span>
         </Link>
-        <p className="text-xs text-muted-foreground mt-1">Admin Portal</p>
+        <p className="text-xs text-muted-foreground mt-1">{ownerLabel} Portal</p>
       </div>
 
       <ul className="space-y-2">
@@ -58,7 +74,7 @@ export function PortalSidebar() {
         })}
       </ul>
 
-      {/* Storytelling Tip Box */}
+      {/* Tip Box */}
       <div className="mt-8 p-4 bg-amber-50 rounded-lg border border-amber-200">
         <div className="flex items-start gap-2">
           <Inbox className="w-5 h-5 text-amber-600 flex-shrink-0" />

@@ -1,7 +1,7 @@
 'use client';
-import { clientConfig } from '@/config';
 // app/portal/thesis/page.tsx
 
+import { clientConfig } from '@/config';
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -58,6 +58,11 @@ export default function PortalThesisPage() {
     requiredRole: 'portal_admin',
   });
 
+  // Get config-driven labels
+  const { company, platformTypeConfig } = clientConfig;
+  const thesisLabel = platformTypeConfig?.thesisLabel || 'Investment Thesis';
+  const founderLabel = platformTypeConfig?.founderLabel || 'Founder';
+
   useEffect(() => {
     loadThesis();
   }, []);
@@ -79,7 +84,7 @@ export default function PortalThesisPage() {
       console.error('Error loading thesis:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load investment thesis',
+        description: `Failed to load ${thesisLabel.toLowerCase()}`,
         variant: 'destructive',
       });
     } finally {
@@ -114,7 +119,7 @@ export default function PortalThesisPage() {
 
       toast({
         title: 'Saved',
-        description: 'Investment thesis updated successfully',
+        description: `${thesisLabel} updated successfully`,
       });
     } catch (error) {
       console.error('Error saving thesis:', error);
@@ -152,9 +157,9 @@ export default function PortalThesisPage() {
         <Card className="max-w-md">
           <CardContent className="pt-6 text-center">
             <Target className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <h2 className="text-xl font-semibold mb-2">No Thesis Found</h2>
+            <h2 className="text-xl font-semibold mb-2">No {thesisLabel} Found</h2>
             <p className="text-muted-foreground mb-4">
-              Complete the AI Discovery session to define your investment criteria.
+              Complete the AI Discovery session to define your criteria.
             </p>
             <Link href="/portal/discovery">
               <Button>
@@ -175,17 +180,17 @@ export default function PortalThesisPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-purple-700 bg-clip-text text-transparent">
-              Investment Thesis
+              {thesisLabel}
             </h1>
             <p className="text-muted-foreground mt-1">
-              Your criteria for evaluating founder submissions
+              Your criteria for evaluating {founderLabel.toLowerCase()} submissions
             </p>
           </div>
 
           {!isEditing ? (
             <Button onClick={() => setIsEditing(true)} variant="outline">
               <Edit2 className="w-4 h-4 mr-2" />
-              Edit Thesis
+              Edit {thesisLabel}
             </Button>
           ) : (
             <div className="flex gap-2">
@@ -207,7 +212,7 @@ export default function PortalThesisPage() {
         {thesis.investment_philosophy && (
           <div className="mb-6 flex items-center gap-2 text-sm text-green-600">
             <CheckCircle className="w-4 h-4" />
-            Thesis configured via AI Discovery
+            {thesisLabel} configured via AI Discovery
             <Link href="/portal/discovery" className="text-primary hover:underline ml-2">
               Refine with AI →
             </Link>
@@ -231,7 +236,7 @@ export default function PortalThesisPage() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Firm</label>
-                  <p className="text-lg">{thesis.firm || clientConfig.company.name}</p>
+                  <p className="text-lg">{thesis.firm || company.name}</p>
                 </div>
               </div>
             </CardContent>
@@ -244,7 +249,7 @@ export default function PortalThesisPage() {
                 <Target className="w-5 h-5 text-primary" />
                 Focus Areas
               </CardTitle>
-              <CardDescription>What you specialize in helping founders with</CardDescription>
+              <CardDescription>What you specialize in helping {founderLabel.toLowerCase()}s with</CardDescription>
             </CardHeader>
             <CardContent>
               {isEditing ? (
@@ -349,19 +354,19 @@ export default function PortalThesisPage() {
             </CardContent>
           </Card>
 
-          {/* Investment Philosophy */}
+          {/* Philosophy */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-primary" />
-                Investment Philosophy
+                Philosophy
               </CardTitle>
               <CardDescription>Your approach and what you believe in</CardDescription>
             </CardHeader>
             <CardContent>
               {isEditing ? (
                 <Textarea
-                  placeholder="Describe your investment philosophy..."
+                  placeholder="Describe your philosophy..."
                   value={editForm.investment_philosophy || ''}
                   onChange={(e) => setEditForm({ ...editForm, investment_philosophy: e.target.value })}
                   rows={4}
@@ -379,14 +384,14 @@ export default function PortalThesisPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
-                Ideal Founder Profile
+                Ideal {founderLabel} Profile
               </CardTitle>
-              <CardDescription>What you look for in founders</CardDescription>
+              <CardDescription>What you look for in {founderLabel.toLowerCase()}s</CardDescription>
             </CardHeader>
             <CardContent>
               {isEditing ? (
                 <Textarea
-                  placeholder="Describe the ideal founder you want to work with..."
+                  placeholder={`Describe the ideal ${founderLabel.toLowerCase()} you want to work with...`}
                   value={editForm.ideal_founder_profile || ''}
                   onChange={(e) => setEditForm({ ...editForm, ideal_founder_profile: e.target.value })}
                   rows={4}
@@ -405,7 +410,7 @@ export default function PortalThesisPage() {
               <CardTitle className="flex items-center gap-2 text-destructive">
                 Deal Breakers
               </CardTitle>
-              <CardDescription>What makes you pass on a founder</CardDescription>
+              <CardDescription>What makes you pass on a {founderLabel.toLowerCase()}</CardDescription>
             </CardHeader>
             <CardContent>
               {isEditing ? (
@@ -431,7 +436,7 @@ export default function PortalThesisPage() {
               <div>
                 <h3 className="font-semibold">Refine with AI Discovery</h3>
                 <p className="text-sm text-muted-foreground">
-                  Have a conversation with AI to better define your investment criteria
+                  Have a conversation with AI to better define your criteria
                 </p>
               </div>
               <Link href="/portal/discovery">
