@@ -5,7 +5,6 @@ export function createClient() {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    // Return a dummy client during build, real client at runtime
     if (typeof window === 'undefined') {
       return null as any
     }
