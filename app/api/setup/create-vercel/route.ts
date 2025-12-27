@@ -5,6 +5,39 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
+// ============================================================================
+// SECURITY: Redact sensitive values from logs
+// ============================================================================
+const SENSITIVE_KEYS = [
+  'SERVICE_ROLE',
+  'API_KEY',
+  'SECRET',
+  'TOKEN',
+  'PASSWORD',
+  'PRIVATE',
+];
+
+function redactPayloadForLogging(payload: any): any {
+  const redacted = JSON.parse(JSON.stringify(payload));
+
+  if (redacted.environmentVariables) {
+    redacted.environmentVariables = redacted.environmentVariables.map((env: any) => {
+      const isSensitive = SENSITIVE_KEYS.some(k =>
+        env.key.toUpperCase().includes(k)
+      );
+
+      return {
+        ...env,
+        value: isSensitive
+          ? `[REDACTED ${env.value.slice(0, 8)}...${env.value.slice(-4)}]`
+          : env.value
+      };
+    });
+  }
+
+  return redacted;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -88,7 +121,8 @@ export async function POST(request: NextRequest) {
       environmentVariables,
     };
 
-    console.log(`[CreateVercel] Create payload:`, JSON.stringify(createPayload, null, 2));
+    // ✅ SECURE: Log with redacted sensitive values
+    console.log(`[CreateVercel] Create payload:`, JSON.stringify(redactPayloadForLogging(createPayload), null, 2));
 
     const createRes = await fetch(`https://api.vercel.com/v10/projects${teamQuery}`, {
       method: 'POST',

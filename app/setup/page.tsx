@@ -9,6 +9,30 @@ import {
 } from 'lucide-react';
 
 // ============================================================================
+// FETCH WITH TIMEOUT HELPER
+// ============================================================================
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = 90000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out - the server is still processing. Check your Vercel dashboard for deployment status.');
+    }
+    throw error;
+  }
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -407,10 +431,6 @@ function SetupContent() {
     setCreateSteps(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
   };
 
-  const allCleanupVerified = cleanupComponents.every(c =>
-    c.status === 'verified' || c.status === 'not_found'
-  );
-
   const cleanupVerifiedCount = cleanupComponents.filter(c =>
     c.status === 'verified' || c.status === 'not_found'
   ).length;
@@ -519,36 +539,34 @@ function SetupContent() {
       // Set all to "deleting" initially
       setCleanupComponents(prev => prev.map(c => ({ ...c, status: 'deleting' as CleanupStatus })));
 
-      const cleanupResponse = await fetch('/api/setup/cleanup', {
+      const cleanupResponse = await fetchWithTimeout('/api/setup/cleanup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectSlug,
           companyName: formData.companyName,
-          companyWebsite: formData.companyWebsite, // v5: Also search by website domain
+          companyWebsite: formData.companyWebsite,
         }),
-      });
+      }, 30000); // 30s timeout for cleanup
 
       const cleanupData = await cleanupResponse.json();
 
       // Update each component based on cleanup results
       if (cleanupData.results) {
-        for (const result of cleanupData.results) {
-          const componentId = result.component.toLowerCase();
+        for (const res of cleanupData.results) {
+          const componentId = res.component.toLowerCase();
 
-          if (result.verified) {
+          if (res.verified) {
             updateCleanupComponent(componentId, {
-              status: result.found ? 'verified' : 'not_found',
-              message: result.found
-                ? `Deleted and verified`
-                : 'Not found (clean)',
-              attempts: result.attempts,
+              status: res.found ? 'verified' : 'not_found',
+              message: res.found ? 'Deleted and verified' : 'Not found (clean)',
+              attempts: res.attempts,
             });
           } else {
             updateCleanupComponent(componentId, {
               status: 'error',
-              message: result.error || 'Failed to delete',
-              attempts: result.attempts,
+              message: res.error || 'Failed to delete',
+              attempts: res.attempts,
             });
           }
         }
@@ -572,7 +590,10 @@ function SetupContent() {
       // ======================================================================
       setCurrentPhase('create');
 
-      const orchestrateResponse = await fetch('/api/setup/orchestrate', {
+      // Set initial "creating" state for first step
+      updateCreateStep('supabase', { status: 'creating', message: 'Creating database...' });
+
+      const orchestrateResponse = await fetchWithTimeout('/api/setup/orchestrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -590,7 +611,20 @@ function SetupContent() {
           branding: formData.branding,
           skipPreCleanup: true, // We already did cleanup
         }),
-      });
+      }, 120000); // 120s timeout for orchestration (matches vercel.json)
+
+      // Check if response is OK before parsing
+      if (!orchestrateResponse.ok) {
+        const errorText = await orchestrateResponse.text();
+        let errorMessage = 'Orchestration failed';
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error || errorJson.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
 
       const orchestrateData: OrchestrationResult = await orchestrateResponse.json();
 
@@ -618,16 +652,31 @@ function SetupContent() {
       setCurrentStep(orchestrateData.success ? 'success' : 'error');
 
     } catch (error: any) {
+      console.error('[Setup] Error:', error);
+
+      // Provide helpful error messages
+      let errorMessage = error.message || 'An unexpected error occurred';
+
+      if (error.message?.includes('Failed to fetch')) {
+        errorMessage = 'Network error - please check your connection and try again. If this persists, check the Vercel dashboard for deployment status.';
+      } else if (error.message?.includes('timed out')) {
+        errorMessage = 'The setup is taking longer than expected. Your platform may still be deploying - check your Vercel dashboard.';
+      }
+
       setResult({
         success: false,
         platformUrl: null,
         steps: [],
         resources: { supabase: null, github: null, vercel: null, elevenlabs: null },
-        error: error.message || 'An unexpected error occurred',
+        error: errorMessage,
       });
       setCurrentStep('error');
     }
   };
+
+  // ============================================================================
+  // RETRY HANDLER
+  // ============================================================================
 
   const handleRetry = () => {
     setCurrentStep('form');
