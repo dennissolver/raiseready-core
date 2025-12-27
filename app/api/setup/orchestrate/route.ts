@@ -402,7 +402,7 @@ export async function POST(request: NextRequest) {
         NEXT_PUBLIC_SUPABASE_URL: resources.supabase.url,
         NEXT_PUBLIC_SUPABASE_ANON_KEY: resources.supabase.anonKey,
         SUPABASE_SERVICE_ROLE_KEY: resources.supabase.serviceKey,
-        ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
+        NEXT_PUBLIC_ELEVENLABS_AGENT_ID: resources.elevenlabs?.agentId || '',
         ELEVENLABS_API_KEY: process.env.ELEVENLABS_API_KEY || '',
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
         NEXT_PUBLIC_COMPANY_NAME: body.companyName,
