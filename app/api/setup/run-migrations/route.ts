@@ -1,7 +1,7 @@
 // app/api/setup/run-migrations/route.ts
 // ============================================================================
 // RUN MIGRATIONS - Full RaiseReady Impact Schema (33 tables + views)
-// Matches child template's types/supabase.ts exactly
+// UPDATED: Simplified RLS policies using auth.uid() directly
 // ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -582,7 +582,7 @@ CREATE TABLE IF NOT EXISTS knowledge_base (
 );
 
 -- ============================================================================
--- ROW LEVEL SECURITY
+-- ROW LEVEL SECURITY - Enable on all tables
 -- ============================================================================
 
 ALTER TABLE founders ENABLE ROW LEVEL SECURITY;
@@ -620,96 +620,227 @@ ALTER TABLE system_metrics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE knowledge_base ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================================
--- RLS POLICIES - Founders access own data
+-- RLS POLICIES - SIMPLIFIED: Uses auth.uid() directly
+-- No auth.users email lookup (avoids permission errors)
 -- ============================================================================
 
--- Founders table - access by email match
+-- FOUNDERS (id = auth.uid())
 DROP POLICY IF EXISTS "founders_own_data" ON founders;
-CREATE POLICY "founders_own_data" ON founders FOR ALL USING (
-  email = (SELECT email FROM auth.users WHERE id = auth.uid())
-);
+DROP POLICY IF EXISTS "service_role_founders" ON founders;
+CREATE POLICY "founders_own_data" ON founders FOR ALL USING (id = auth.uid());
+CREATE POLICY "service_role_founders" ON founders FOR ALL USING (auth.role() = 'service_role');
 
--- Founder profiles
+-- FOUNDER_PROFILES (founder_id = auth.uid())
 DROP POLICY IF EXISTS "founder_profiles_own" ON founder_profiles;
-CREATE POLICY "founder_profiles_own" ON founder_profiles FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
+DROP POLICY IF EXISTS "service_role_founder_profiles" ON founder_profiles;
+CREATE POLICY "founder_profiles_own" ON founder_profiles FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_founder_profiles" ON founder_profiles FOR ALL USING (auth.role() = 'service_role');
 
--- Pitch decks
+-- INVESTOR_PROFILES (founder_id = auth.uid())
+DROP POLICY IF EXISTS "investor_profiles_own" ON investor_profiles;
+DROP POLICY IF EXISTS "investor_profiles_public" ON investor_profiles;
+DROP POLICY IF EXISTS "service_role_investor_profiles" ON investor_profiles;
+CREATE POLICY "investor_profiles_own" ON investor_profiles FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "investor_profiles_public" ON investor_profiles FOR SELECT USING (profile_visibility = 'public');
+CREATE POLICY "service_role_investor_profiles" ON investor_profiles FOR ALL USING (auth.role() = 'service_role');
+
+-- PITCH_DECKS (founder_id = auth.uid())
 DROP POLICY IF EXISTS "pitch_decks_own" ON pitch_decks;
-CREATE POLICY "pitch_decks_own" ON pitch_decks FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
+DROP POLICY IF EXISTS "service_role_pitch_decks" ON pitch_decks;
+CREATE POLICY "pitch_decks_own" ON pitch_decks FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_pitch_decks" ON pitch_decks FOR ALL USING (auth.role() = 'service_role');
 
--- Deck analysis
+-- DECK_ANALYSIS (via deck_id -> pitch_decks)
 DROP POLICY IF EXISTS "deck_analysis_own" ON deck_analysis;
+DROP POLICY IF EXISTS "service_role_deck_analysis" ON deck_analysis;
 CREATE POLICY "deck_analysis_own" ON deck_analysis FOR ALL USING (
-  deck_id IN (SELECT id FROM pitch_decks WHERE founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid())))
+  deck_id IN (SELECT id FROM pitch_decks WHERE founder_id = auth.uid())
 );
+CREATE POLICY "service_role_deck_analysis" ON deck_analysis FOR ALL USING (auth.role() = 'service_role');
 
--- Coaching sessions
+-- SCORE_HISTORY (via deck_id -> pitch_decks)
+DROP POLICY IF EXISTS "score_history_own" ON score_history;
+DROP POLICY IF EXISTS "service_role_score_history" ON score_history;
+CREATE POLICY "score_history_own" ON score_history FOR ALL USING (
+  deck_id IN (SELECT id FROM pitch_decks WHERE founder_id = auth.uid())
+);
+CREATE POLICY "service_role_score_history" ON score_history FOR ALL USING (auth.role() = 'service_role');
+
+-- PITCH_VIDEOS (via deck_id -> pitch_decks)
+DROP POLICY IF EXISTS "pitch_videos_own" ON pitch_videos;
+DROP POLICY IF EXISTS "service_role_pitch_videos" ON pitch_videos;
+CREATE POLICY "pitch_videos_own" ON pitch_videos FOR ALL USING (
+  deck_id IN (SELECT id FROM pitch_decks WHERE founder_id = auth.uid())
+);
+CREATE POLICY "service_role_pitch_videos" ON pitch_videos FOR ALL USING (auth.role() = 'service_role');
+
+-- COACHING_SESSIONS (founder_id = auth.uid())
 DROP POLICY IF EXISTS "coaching_sessions_own" ON coaching_sessions;
-CREATE POLICY "coaching_sessions_own" ON coaching_sessions FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
+DROP POLICY IF EXISTS "service_role_coaching_sessions" ON coaching_sessions;
+CREATE POLICY "coaching_sessions_own" ON coaching_sessions FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_coaching_sessions" ON coaching_sessions FOR ALL USING (auth.role() = 'service_role');
 
--- Voice sessions
+-- AI_FEEDBACK (via deck_id -> pitch_decks)
+DROP POLICY IF EXISTS "ai_feedback_own" ON ai_feedback;
+DROP POLICY IF EXISTS "service_role_ai_feedback" ON ai_feedback;
+CREATE POLICY "ai_feedback_own" ON ai_feedback FOR ALL USING (
+  deck_id IN (SELECT id FROM pitch_decks WHERE founder_id = auth.uid())
+);
+CREATE POLICY "service_role_ai_feedback" ON ai_feedback FOR ALL USING (auth.role() = 'service_role');
+
+-- INVESTOR_DISCOVERY_SESSIONS (investor_id = auth.uid())
+DROP POLICY IF EXISTS "investor_discovery_own" ON investor_discovery_sessions;
+DROP POLICY IF EXISTS "service_role_investor_discovery" ON investor_discovery_sessions;
+CREATE POLICY "investor_discovery_own" ON investor_discovery_sessions FOR ALL USING (investor_id = auth.uid());
+CREATE POLICY "service_role_investor_discovery" ON investor_discovery_sessions FOR ALL USING (auth.role() = 'service_role');
+
+-- VOICE_SESSIONS (user_id = auth.uid())
 DROP POLICY IF EXISTS "voice_sessions_own" ON voice_sessions;
-CREATE POLICY "voice_sessions_own" ON voice_sessions FOR ALL USING (
-  user_id = auth.uid()
-);
+DROP POLICY IF EXISTS "service_role_voice_sessions" ON voice_sessions;
+CREATE POLICY "voice_sessions_own" ON voice_sessions FOR ALL USING (user_id = auth.uid());
+CREATE POLICY "service_role_voice_sessions" ON voice_sessions FOR ALL USING (auth.role() = 'service_role');
 
--- Voice coaching sessions
+-- VOICE_MESSAGES (via session_id -> voice_sessions)
+DROP POLICY IF EXISTS "voice_messages_own" ON voice_messages;
+DROP POLICY IF EXISTS "service_role_voice_messages" ON voice_messages;
+CREATE POLICY "voice_messages_own" ON voice_messages FOR ALL USING (
+  session_id IN (SELECT id FROM voice_sessions WHERE user_id = auth.uid())
+);
+CREATE POLICY "service_role_voice_messages" ON voice_messages FOR ALL USING (auth.role() = 'service_role');
+
+-- VOICE_FEEDBACK (user_id = auth.uid())
+DROP POLICY IF EXISTS "voice_feedback_own" ON voice_feedback;
+DROP POLICY IF EXISTS "service_role_voice_feedback" ON voice_feedback;
+CREATE POLICY "voice_feedback_own" ON voice_feedback FOR ALL USING (user_id = auth.uid());
+CREATE POLICY "service_role_voice_feedback" ON voice_feedback FOR ALL USING (auth.role() = 'service_role');
+
+-- VOICE_COACHING_SESSIONS (user_id = auth.uid())
 DROP POLICY IF EXISTS "voice_coaching_own" ON voice_coaching_sessions;
-CREATE POLICY "voice_coaching_own" ON voice_coaching_sessions FOR ALL USING (
-  user_id = auth.uid()
-);
+DROP POLICY IF EXISTS "service_role_voice_coaching" ON voice_coaching_sessions;
+CREATE POLICY "voice_coaching_own" ON voice_coaching_sessions FOR ALL USING (user_id = auth.uid());
+CREATE POLICY "service_role_voice_coaching" ON voice_coaching_sessions FOR ALL USING (auth.role() = 'service_role');
 
--- Founder watchlist
-DROP POLICY IF EXISTS "founder_watchlist_own" ON founder_watchlist;
-CREATE POLICY "founder_watchlist_own" ON founder_watchlist FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
+-- FOUNDER_INVESTOR_MATCHES (founder_id = auth.uid())
+DROP POLICY IF EXISTS "founder_matches_own" ON founder_investor_matches;
+DROP POLICY IF EXISTS "service_role_founder_matches" ON founder_investor_matches;
+CREATE POLICY "founder_matches_own" ON founder_investor_matches FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_founder_matches" ON founder_investor_matches FOR ALL USING (auth.role() = 'service_role');
 
--- Watchlist alerts
-DROP POLICY IF EXISTS "watchlist_alerts_own" ON watchlist_alerts;
-CREATE POLICY "watchlist_alerts_own" ON watchlist_alerts FOR ALL USING (
-  user_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
+-- IMPACT_MATCHING_SCORES (founder_id or investor_id = auth.uid())
+DROP POLICY IF EXISTS "impact_matching_own" ON impact_matching_scores;
+DROP POLICY IF EXISTS "service_role_impact_matching" ON impact_matching_scores;
+CREATE POLICY "impact_matching_own" ON impact_matching_scores FOR ALL USING (
+  founder_id = auth.uid() OR investor_id = auth.uid()
 );
+CREATE POLICY "service_role_impact_matching" ON impact_matching_scores FOR ALL USING (auth.role() = 'service_role');
 
--- Notification preferences
-DROP POLICY IF EXISTS "notification_prefs_own" ON notification_preferences;
-CREATE POLICY "notification_prefs_own" ON notification_preferences FOR ALL USING (
-  user_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
-
--- SDG projections
+-- FOUNDER_SDG_PROJECTIONS (founder_id = auth.uid())
 DROP POLICY IF EXISTS "sdg_projections_own" ON founder_sdg_projections;
-CREATE POLICY "sdg_projections_own" ON founder_sdg_projections FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
-);
+DROP POLICY IF EXISTS "service_role_sdg_projections" ON founder_sdg_projections;
+CREATE POLICY "sdg_projections_own" ON founder_sdg_projections FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_sdg_projections" ON founder_sdg_projections FOR ALL USING (auth.role() = 'service_role');
 
--- Impact returns
+-- INVESTOR_SDG_VALUATIONS (investor_id = auth.uid())
+DROP POLICY IF EXISTS "investor_valuations_own" ON investor_sdg_valuations;
+DROP POLICY IF EXISTS "service_role_investor_valuations" ON investor_sdg_valuations;
+CREATE POLICY "investor_valuations_own" ON investor_sdg_valuations FOR ALL USING (investor_id = auth.uid());
+CREATE POLICY "service_role_investor_valuations" ON investor_sdg_valuations FOR ALL USING (auth.role() = 'service_role');
+
+-- IMPACT_RETURNS_CALCULATED (founder_id = auth.uid())
 DROP POLICY IF EXISTS "impact_returns_own" ON impact_returns_calculated;
-CREATE POLICY "impact_returns_own" ON impact_returns_calculated FOR ALL USING (
-  founder_id IN (SELECT id FROM founders WHERE email = (SELECT email FROM auth.users WHERE id = auth.uid()))
+DROP POLICY IF EXISTS "service_role_impact_returns" ON impact_returns_calculated;
+CREATE POLICY "impact_returns_own" ON impact_returns_calculated FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_impact_returns" ON impact_returns_calculated FOR ALL USING (auth.role() = 'service_role');
+
+-- FOUNDER_WATCHLIST (founder_id = auth.uid())
+DROP POLICY IF EXISTS "founder_watchlist_own" ON founder_watchlist;
+DROP POLICY IF EXISTS "service_role_founder_watchlist" ON founder_watchlist;
+CREATE POLICY "founder_watchlist_own" ON founder_watchlist FOR ALL USING (founder_id = auth.uid());
+CREATE POLICY "service_role_founder_watchlist" ON founder_watchlist FOR ALL USING (auth.role() = 'service_role');
+
+-- INVESTOR_WATCHLIST (investor_id = auth.uid())
+DROP POLICY IF EXISTS "investor_watchlist_own" ON investor_watchlist;
+DROP POLICY IF EXISTS "service_role_investor_watchlist" ON investor_watchlist;
+CREATE POLICY "investor_watchlist_own" ON investor_watchlist FOR ALL USING (investor_id = auth.uid());
+CREATE POLICY "service_role_investor_watchlist" ON investor_watchlist FOR ALL USING (auth.role() = 'service_role');
+
+-- INVESTOR_NETWORK_WATCHLIST (investor_id = auth.uid())
+DROP POLICY IF EXISTS "network_watchlist_own" ON investor_network_watchlist;
+DROP POLICY IF EXISTS "service_role_network_watchlist" ON investor_network_watchlist;
+CREATE POLICY "network_watchlist_own" ON investor_network_watchlist FOR ALL USING (investor_id = auth.uid());
+CREATE POLICY "service_role_network_watchlist" ON investor_network_watchlist FOR ALL USING (auth.role() = 'service_role');
+
+-- WATCHLIST_ALERTS (user_id = auth.uid())
+DROP POLICY IF EXISTS "watchlist_alerts_own" ON watchlist_alerts;
+DROP POLICY IF EXISTS "service_role_watchlist_alerts" ON watchlist_alerts;
+CREATE POLICY "watchlist_alerts_own" ON watchlist_alerts FOR ALL USING (user_id = auth.uid());
+CREATE POLICY "service_role_watchlist_alerts" ON watchlist_alerts FOR ALL USING (auth.role() = 'service_role');
+
+-- PROFILE_VIEWS (viewer_id or viewed_id = auth.uid())
+DROP POLICY IF EXISTS "profile_views_own" ON profile_views;
+DROP POLICY IF EXISTS "service_role_profile_views" ON profile_views;
+CREATE POLICY "profile_views_own" ON profile_views FOR ALL USING (
+  viewer_id = auth.uid() OR viewed_id = auth.uid()
 );
+CREATE POLICY "service_role_profile_views" ON profile_views FOR ALL USING (auth.role() = 'service_role');
 
--- Superadmins
+-- NOTIFICATION_PREFERENCES (user_id = auth.uid())
+DROP POLICY IF EXISTS "notification_prefs_own" ON notification_preferences;
+DROP POLICY IF EXISTS "service_role_notification_prefs" ON notification_preferences;
+CREATE POLICY "notification_prefs_own" ON notification_preferences FOR ALL USING (user_id = auth.uid());
+CREATE POLICY "service_role_notification_prefs" ON notification_preferences FOR ALL USING (auth.role() = 'service_role');
+
+-- SUPERADMINS (id = auth.uid())
 DROP POLICY IF EXISTS "superadmins_self" ON superadmins;
+DROP POLICY IF EXISTS "service_role_superadmins" ON superadmins;
 CREATE POLICY "superadmins_self" ON superadmins FOR SELECT USING (id = auth.uid());
+CREATE POLICY "service_role_superadmins" ON superadmins FOR ALL USING (auth.role() = 'service_role');
 
--- Public read for SDG valuations
+-- ============================================================================
+-- PUBLIC READ TABLES
+-- ============================================================================
+
+-- SDG_VALUATIONS (public read)
 DROP POLICY IF EXISTS "sdg_valuations_public" ON sdg_valuations;
+DROP POLICY IF EXISTS "service_role_sdg_valuations" ON sdg_valuations;
 CREATE POLICY "sdg_valuations_public" ON sdg_valuations FOR SELECT USING (true);
+CREATE POLICY "service_role_sdg_valuations" ON sdg_valuations FOR ALL USING (auth.role() = 'service_role');
 
--- Public read for investors directory
+-- INVESTORS (public read)
 DROP POLICY IF EXISTS "investors_public_read" ON investors;
+DROP POLICY IF EXISTS "service_role_investors" ON investors;
 CREATE POLICY "investors_public_read" ON investors FOR SELECT USING (true);
+CREATE POLICY "service_role_investors" ON investors FOR ALL USING (auth.role() = 'service_role');
 
--- Public read for knowledge base
+-- KNOWLEDGE_BASE (public read)
 DROP POLICY IF EXISTS "knowledge_base_public" ON knowledge_base;
+DROP POLICY IF EXISTS "service_role_knowledge_base" ON knowledge_base;
 CREATE POLICY "knowledge_base_public" ON knowledge_base FOR SELECT USING (true);
+CREATE POLICY "service_role_knowledge_base" ON knowledge_base FOR ALL USING (auth.role() = 'service_role');
+
+-- FEATURE_FLAGS (public read)
+DROP POLICY IF EXISTS "feature_flags_read" ON feature_flags;
+DROP POLICY IF EXISTS "service_role_feature_flags" ON feature_flags;
+CREATE POLICY "feature_flags_read" ON feature_flags FOR SELECT USING (true);
+CREATE POLICY "service_role_feature_flags" ON feature_flags FOR ALL USING (auth.role() = 'service_role');
+
+-- GLOBAL_SETTINGS (public settings only)
+DROP POLICY IF EXISTS "global_settings_public" ON global_settings;
+DROP POLICY IF EXISTS "service_role_global_settings" ON global_settings;
+CREATE POLICY "global_settings_public" ON global_settings FOR SELECT USING (is_public = true);
+CREATE POLICY "service_role_global_settings" ON global_settings FOR ALL USING (auth.role() = 'service_role');
+
+-- ============================================================================
+-- ADMIN-ONLY TABLES
+-- ============================================================================
+
+-- ADMIN_AUDIT_LOG (service role only)
+DROP POLICY IF EXISTS "service_role_admin_audit" ON admin_audit_log;
+CREATE POLICY "service_role_admin_audit" ON admin_audit_log FOR ALL USING (auth.role() = 'service_role');
+
+-- SYSTEM_METRICS (service role only)
+DROP POLICY IF EXISTS "service_role_system_metrics" ON system_metrics;
+CREATE POLICY "service_role_system_metrics" ON system_metrics FOR ALL USING (auth.role() = 'service_role');
 
 -- ============================================================================
 -- STORAGE BUCKET
@@ -806,11 +937,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error || 'Migration failed' }, { status: 500 });
     }
 
-    console.log(`[run-migrations] Success - 33 tables created!`);
+    console.log(`[run-migrations] Success - 33 tables created with simplified RLS!`);
 
     return NextResponse.json({
       success: true,
-      version: 'v3-full-raiseready',
+      version: 'v4-simplified-rls',
       tablesCreated: [
         'founders', 'superadmins', 'founder_profiles', 'investor_profiles', 'investors',
         'pitch_decks', 'deck_analysis', 'score_history', 'pitch_videos',
@@ -823,7 +954,8 @@ export async function POST(request: NextRequest) {
         'admin_audit_log', 'feature_flags', 'global_settings', 'system_metrics', 'knowledge_base'
       ],
       bucketCreated: 'pitch-decks',
-      rlsPoliciesApplied: true
+      rlsPoliciesApplied: true,
+      rlsPattern: 'Simplified - auth.uid() direct (no auth.users lookup)'
     });
 
   } catch (error: any) {
@@ -835,8 +967,9 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     service: 'run-migrations',
-    version: 'v3-full-raiseready',
+    version: 'v4-simplified-rls',
     tables: 33,
-    description: 'Creates complete RaiseReady Impact schema matching child template'
+    description: 'Creates complete RaiseReady Impact schema with simplified RLS policies',
+    rlsPattern: 'Uses auth.uid() directly - no auth.users email lookup'
   });
 }
