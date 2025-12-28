@@ -1,31 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabase() {
+  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+}
 
-// GET /api/proxy/usage - Get usage for all clients or specific client
 export async function GET(req: NextRequest) {
+  const supabase = getSupabase();
   const { searchParams } = new URL(req.url);
   const clientSlug = searchParams.get('client');
   const yearMonth = searchParams.get('month') || new Date().toISOString().slice(0, 7);
 
-  // Get all clients with their usage
   if (!clientSlug) {
     const { data: clients, error } = await supabase
       .from('proxy_clients')
       .select(`
-        id,
-        name,
-        slug,
-        admin_email,
-        platform_url,
-        monthly_token_limit,
-        monthly_cost_limit_usd,
-        is_active,
-        created_at
+        id, name, slug, admin_email, platform_url,
+        monthly_token_limit, monthly_cost_limit_usd, is_active, created_at
       `)
       .order('created_at', { ascending: false });
 
@@ -33,7 +24,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Get usage for each client
     const clientsWithUsage = await Promise.all(
       (clients || []).map(async (client) => {
         const { data: usage } = await supabase
@@ -53,7 +43,6 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    // Calculate totals
     const totals = clientsWithUsage.reduce(
       (acc, client) => ({
         total_requests: acc.total_requests + (client.usage.total_requests || 0),
@@ -63,14 +52,9 @@ export async function GET(req: NextRequest) {
       { total_requests: 0, total_tokens: 0, total_cost_usd: 0 }
     );
 
-    return NextResponse.json({
-      month: yearMonth,
-      clients: clientsWithUsage,
-      totals,
-    });
+    return NextResponse.json({ month: yearMonth, clients: clientsWithUsage, totals });
   }
 
-  // Get specific client details
   const { data: client, error: clientError } = await supabase
     .from('proxy_clients')
     .select('*')
@@ -81,7 +65,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Client not found' }, { status: 404 });
   }
 
-  // Get monthly usage
   const { data: monthlyUsage } = await supabase
     .from('proxy_usage_monthly')
     .select('*')
@@ -89,7 +72,6 @@ export async function GET(req: NextRequest) {
     .order('year_month', { ascending: false })
     .limit(12);
 
-  // Get recent logs
   const { data: recentLogs } = await supabase
     .from('proxy_usage_logs')
     .select('*')
@@ -97,7 +79,6 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(100);
 
-  // Get Resend key status
   const { data: resendKey } = await supabase
     .from('proxy_resend_keys')
     .select('api_key_preview, is_active, created_at')
@@ -113,8 +94,8 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// PATCH /api/proxy/usage - Update client limits
 export async function PATCH(req: NextRequest) {
+  const supabase = getSupabase();
   const body = await req.json();
   const { clientSlug, monthlyTokenLimit, monthlyCostLimitUsd, isActive } = body;
 

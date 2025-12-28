@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { generateClientSecret } from '@/lib/proxy-utils';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 interface RegisterClientRequest {
   name: string;
@@ -22,6 +24,7 @@ interface RegisterClientRequest {
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabase();
     const body: RegisterClientRequest = await req.json();
     const { name, slug, adminEmail, adminName } = body;
 
@@ -84,7 +87,6 @@ export async function POST(req: NextRequest) {
       clientSecret,
       internalId: data.id,
     });
-
   } catch (error) {
     console.error('Register client error:', error);
     return NextResponse.json(

@@ -1,10 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Initialize Supabase client with service role for proxy operations
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Lazy initialization - only create client when needed
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+}
 
 export interface ProxyClient {
   id: string;
@@ -27,7 +29,6 @@ export interface UsageLog {
   request_metadata?: Record<string, any>;
 }
 
-// Token pricing per 1M tokens (as of Dec 2024)
 export const PRICING = {
   anthropic: {
     'claude-sonnet-4-20250514': { input: 3.00, output: 15.00 },
@@ -46,9 +47,6 @@ export const PRICING = {
   },
 };
 
-/**
- * Validate client credentials
- */
 export async function validateClient(
   clientId: string | null,
   clientSecret: string | null
@@ -58,6 +56,7 @@ export async function validateClient(
     return null;
   }
 
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from('proxy_clients')
     .select('id, name, slug, is_active, monthly_token_limit, monthly_cost_limit_usd')
@@ -78,13 +77,10 @@ export async function validateClient(
   return data as ProxyClient;
 }
 
-/**
- * Check if client is over their usage limit
- */
 export async function isOverLimit(clientId: string): Promise<{ over: boolean; reason?: string }> {
-  const yearMonth = new Date().toISOString().slice(0, 7); // '2024-12'
+  const supabase = getSupabase();
+  const yearMonth = new Date().toISOString().slice(0, 7);
 
-  // Get client limits
   const { data: client } = await supabase
     .from('proxy_clients')
     .select('monthly_token_limit, monthly_cost_limit_usd')
@@ -95,7 +91,6 @@ export async function isOverLimit(clientId: string): Promise<{ over: boolean; re
     return { over: true, reason: 'Client not found' };
   }
 
-  // Get current month usage
   const { data: usage } = await supabase
     .from('proxy_usage_monthly')
     .select('total_tokens, total_cost_usd')
@@ -104,7 +99,6 @@ export async function isOverLimit(clientId: string): Promise<{ over: boolean; re
     .single();
 
   if (!usage) {
-    // No usage yet this month
     return { over: false };
   }
 
@@ -119,9 +113,6 @@ export async function isOverLimit(clientId: string): Promise<{ over: boolean; re
   return { over: false };
 }
 
-/**
- * Calculate cost based on tokens and model
- */
 export function calculateCost(
   provider: 'anthropic' | 'openai',
   model: string,
@@ -137,10 +128,8 @@ export function calculateCost(
   return inputCost + outputCost;
 }
 
-/**
- * Log usage to database
- */
 export async function logUsage(log: UsageLog): Promise<void> {
+  const supabase = getSupabase();
   const { error } = await supabase.from('proxy_usage_logs').insert({
     client_id: log.client_id,
     endpoint: log.endpoint,
@@ -158,22 +147,17 @@ export async function logUsage(log: UsageLog): Promise<void> {
   }
 }
 
-/**
- * Generate a secure client secret
- */
 export function generateClientSecret(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let secret = 'rr_'; // prefix for RaiseReady
+  let secret = 'rr_';
   for (let i = 0; i < 40; i++) {
     secret += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return secret;
 }
 
-/**
- * Get client usage summary
- */
 export async function getClientUsageSummary(clientId: string) {
+  const supabase = getSupabase();
   const yearMonth = new Date().toISOString().slice(0, 7);
 
   const { data } = await supabase

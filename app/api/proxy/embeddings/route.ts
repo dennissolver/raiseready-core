@@ -66,7 +66,6 @@ export async function POST(req: NextRequest) {
           input_count: Array.isArray(body.input) ? body.input.length : 1,
         },
       });
-
       console.log(`Proxy [${client.slug}]: ${totalTokens} embedding tokens, $${cost.toFixed(6)}`);
     }
 

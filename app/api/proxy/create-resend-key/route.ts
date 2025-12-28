@@ -3,10 +3,9 @@ import { createClient } from '@supabase/supabase-js';
 
 const RESEND_API_URL = 'https://api.resend.com';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+function getSupabase() {
+  return createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+}
 
 interface CreateResendKeyRequest {
   clientSlug: string;
@@ -15,6 +14,7 @@ interface CreateResendKeyRequest {
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = getSupabase();
     const body: CreateResendKeyRequest = await req.json();
     const { clientSlug, clientName } = body;
 
@@ -30,7 +30,6 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    // Get client record
     const { data: client } = await supabase
       .from('proxy_clients')
       .select('id')
@@ -41,7 +40,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Client not found' }, { status: 404 });
     }
 
-    // Check if already has a key
     const { data: existingKey } = await supabase
       .from('proxy_resend_keys')
       .select('*')
@@ -58,7 +56,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create new API key via Resend Management API
     const createKeyResponse = await fetch(`${RESEND_API_URL}/api-keys`, {
       method: 'POST',
       headers: {
@@ -67,15 +64,13 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         name: `${clientName} (${clientSlug})`,
-        permission: 'sending_access', // Limited to sending only
+        permission: 'sending_access',
       }),
     });
 
     if (!createKeyResponse.ok) {
       const error = await createKeyResponse.text();
       console.error('Failed to create Resend API key:', error);
-
-      // Don't fail setup - email is optional
       return NextResponse.json({
         success: false,
         warning: `Could not create Resend key: ${error}`,
@@ -85,13 +80,12 @@ export async function POST(req: NextRequest) {
 
     const keyData = await createKeyResponse.json();
 
-    // Store key reference (not the full key - that's only shown once!)
     const { error: dbError } = await supabase
       .from('proxy_resend_keys')
       .insert({
         client_id: client.id,
         resend_api_key_id: keyData.id,
-        api_key_preview: keyData.token?.slice(0, 12) + '...', // First 12 chars
+        api_key_preview: keyData.token?.slice(0, 12) + '...',
         is_active: true,
       });
 
@@ -101,7 +95,6 @@ export async function POST(req: NextRequest) {
 
     console.log(`Created Resend API key for client: ${clientSlug}`);
 
-    // Return the full token - it's only available now!
     return NextResponse.json({
       success: true,
       apiKey: keyData.token,
@@ -118,8 +111,8 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// Get key status (not the key itself)
 export async function GET(req: NextRequest) {
+  const supabase = getSupabase();
   const { searchParams } = new URL(req.url);
   const clientSlug = searchParams.get('clientSlug');
 

@@ -1,7 +1,13 @@
 import { createClient } from '@/lib/supabase/server'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const supabase = await createClient()
+  
+  if (!supabase) {
+    return Response.json({ error: 'Supabase not configured' }, { status: 500 })
+  }
   
   const { data, error } = await supabase
     .from('pitch_decks')
@@ -14,4 +20,3 @@ export async function GET() {
   
   return Response.json({ decks: data, error })
 }
-
