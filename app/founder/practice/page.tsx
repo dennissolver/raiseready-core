@@ -2,274 +2,408 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
-import { clientConfig } from '@/config';
-import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import {
-  ArrowLeft, Mic, Play, Users, TrendingUp,
-  Clock, Target, AlertCircle, CheckCircle, Star
+  ArrowLeft, Mic, Users, AlertCircle, Loader2
 } from 'lucide-react';
-import { VoiceInterface, CoachingMode } from '@/components/voice-coach/VoiceInterface';
 
 // ============================================================================
-// INVESTOR PERSONAS
+// TYPES (from DataWizz)
 // ============================================================================
 
 interface InvestorPersona {
-  id: string;
-  name: string;
-  title: string;
-  style: string;
-  description: string;
-  focusAreas: string[];
+  persona_id: string;
+  display_name: string;
+  role: string;
   difficulty: 'easy' | 'medium' | 'hard';
-  icon: string;
+  difficulty_score: number;
+  personality_traits: string[];
+  avatar_emoji: string;
+  primary_focus_areas: string[];
+  background_story: string;
+  what_impresses: string;
+  what_concerns: string;
 }
 
-const INVESTOR_PERSONAS: InvestorPersona[] = [
-  {
-    id: 'supportive',
-    name: 'Sarah Chen',
-    title: 'Angel Investor',
-    style: 'Supportive & Encouraging',
-    description: 'Asks clarifying questions and helps you refine your pitch. Great for first-time practice.',
-    focusAreas: ['Team background', 'Personal motivation', 'Vision'],
-    difficulty: 'easy',
-    icon: '😊',
-  },
-  {
-    id: 'analytical',
-    name: 'Michael Torres',
-    title: 'VC Partner',
-    style: 'Data-Driven & Analytical',
-    description: 'Focused on metrics, market size, and unit economics. Expects concrete numbers.',
-    focusAreas: ['Market size', 'Unit economics', 'Growth metrics'],
-    difficulty: 'medium',
-    icon: '📊',
-  },
-  {
-    id: 'skeptical',
-    name: 'Dr. Amanda Foster',
-    title: 'Impact Fund Manager',
-    style: 'Skeptical & Rigorous',
-    description: 'Challenges assumptions and looks for holes in your logic. Tough but fair.',
-    focusAreas: ['Competitive moats', 'Risk factors', 'Exit strategy'],
-    difficulty: 'hard',
-    icon: '🧐',
-  },
-  {
-    id: 'impact',
-    name: 'David Okonkwo',
-    title: 'ESG Investment Director',
-    style: 'Impact-Focused',
-    description: 'Deep dives on social/environmental impact and SDG alignment.',
-    focusAreas: ['Impact metrics', 'SDG alignment', 'Theory of change'],
-    difficulty: 'medium',
-    icon: '🌍',
-  },
-];
+interface SessionConfig {
+  sessionId: string;
+  agentType: string;
+  persona: string;
+  difficulty: number;
+  focusAreas: string[];
+  sessionGoals: string[];
+  systemPrompt: string;
+  openingMessage: string;
+  voiceConfig?: {
+    agentId: string;
+    voiceId?: string;
+  };
+}
 
 // ============================================================================
-// PITCH PRACTICE PAGE
+// DATAWIZZ HOOKS
 // ============================================================================
 
-export default function PitchPracticePage() {
-  const router = useRouter();
-  const supabase = createClient();
+function useDataWizzPersonas() {
+  const [personas, setPersonas] = useState<InvestorPersona[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const { isLoading: authLoading, user } = useAuth({
-    requireAuth: true,
-    requiredRole: 'founder',
-  });
-
-  // State
-  const [selectedPersona, setSelectedPersona] = useState<InvestorPersona | null>(null);
-  const [practiceMode, setPracticeMode] = useState<'select' | 'practice' | 'feedback'>('select');
-  const [sessionHistory, setSessionHistory] = useState<any[]>([]);
-  const [currentDeck, setCurrentDeck] = useState<any>(null);
-  const [founderData, setFounderData] = useState<any>(null);
-
-  // Load founder data and latest deck
   useEffect(() => {
-    const loadData = async () => {
-      if (!user?.id) return;
+    async function fetchPersonas() {
+      try {
+        const response = await fetch('/api/datawizz/personas');
+        if (!response.ok) throw new Error('Failed to fetch personas');
+        const data = await response.json();
+        setPersonas(data.personas || []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        // Fallback to empty - could also use cached/default personas
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchPersonas();
+  }, []);
 
-      // Load founder
-      const { data: founder } = await supabase
-        .from('founders')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      setFounderData(founder);
+  return { personas, loading, error };
+}
 
-      // Load latest deck
-      const { data: deck } = await supabase
-        .from('pitch_decks')
-        .select('*')
-        .eq('founder_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-      setCurrentDeck(deck);
+async function initDataWizzSession(
+  personaId: string,
+  sessionType: 'voice' | 'chat' = 'voice'
+): Promise<SessionConfig | null> {
+  try {
+    const response = await fetch('/api/datawizz/session/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestType: sessionType,
+        selectedPersona: personaId,
+      }),
+    });
 
-      // Load practice history
-      const { data: history } = await supabase
-        .from('voice_sessions')
-        .select('*')
-        .eq('founder_id', user.id)
-        .eq('mode', 'pitch_practice')
-        .order('created_at', { ascending: false })
-        .limit(10);
-      setSessionHistory(history || []);
-    };
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to initialize session');
+    }
 
-    loadData();
-  }, [user?.id, supabase]);
+    return await response.json();
+  } catch (err) {
+    console.error('DataWizz session init failed:', err);
+    return null;
+  }
+}
 
-  // Handle session end
-  const handleSessionEnd = async (sessionId: string, transcript: any[]) => {
-    // Save to database
+async function completeDataWizzSession(
+  sessionId: string,
+  outcome: {
+    completed: boolean;
+    duration: number;
+    turnCount: number;
+    scores?: Record<string, number>;
+    transcript?: Array<{ role: string; content: string }>;
+  }
+): Promise<void> {
+  try {
+    await fetch('/api/datawizz/session/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, ...outcome }),
+    });
+  } catch (err) {
+    console.error('DataWizz session complete failed:', err);
+  }
+}
+
+// ============================================================================
+// DATAWIZZ VOICE INTERFACE
+// ============================================================================
+
+interface DataWizzVoiceProps {
+  sessionConfig: SessionConfig;
+  persona: InvestorPersona;
+  onSessionEnd: (transcript: Array<{ role: string; content: string }>) => void;
+}
+
+function DataWizzVoiceInterface({ sessionConfig, persona, onSessionEnd }: DataWizzVoiceProps) {
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [transcript, setTranscript] = useState<Array<{ role: string; content: string }>>([]);
+  const [startTime, setStartTime] = useState<number | null>(null);
+
+  // Use ElevenLabs hook when available
+  // For now, we'll show the UI structure
+
+  const agentId = sessionConfig.voiceConfig?.agentId ||
+    process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID;
+
+  const handleStart = async () => {
+    if (!agentId) {
+      alert('Voice agent not configured');
+      return;
+    }
+
+    setIsConnecting(true);
+    setStartTime(Date.now());
+
     try {
-      await supabase.from('voice_sessions').insert({
-        session_id: sessionId,
-        founder_id: user?.id,
-        mode: 'pitch_practice',
-        persona: selectedPersona?.id,
-        transcript,
-        deck_id: currentDeck?.id,
-        created_at: new Date().toISOString(),
-      });
+      // Request microphone
+      await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      setPracticeMode('feedback');
-    } catch (error) {
-      console.error('Error saving session:', error);
+      // In real implementation, start ElevenLabs conversation here
+      // with sessionConfig.systemPrompt as dynamic variable
+
+      setIsConnected(true);
+
+      // Add opening message to transcript
+      if (sessionConfig.openingMessage) {
+        setTranscript([{ role: 'assistant', content: sessionConfig.openingMessage }]);
+      }
+    } catch (err) {
+      console.error('Failed to start voice session:', err);
+    } finally {
+      setIsConnecting(false);
     }
   };
 
-  // Start new practice
-  const startPractice = (persona: InvestorPersona) => {
-    setSelectedPersona(persona);
-    setPracticeMode('practice');
+  const handleEnd = async () => {
+    const duration = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
+
+    // Complete the DataWizz session
+    await completeDataWizzSession(sessionConfig.sessionId, {
+      completed: true,
+      duration,
+      turnCount: transcript.length,
+      transcript,
+    });
+
+    setIsConnected(false);
+    onSessionEnd(transcript);
   };
 
-  // Loading
-  if (authLoading) {
+  const difficultyColor = {
+    easy: 'bg-green-500',
+    medium: 'bg-yellow-500',
+    hard: 'bg-red-500',
+  }[persona.difficulty];
+
+  return (
+    <Card className="border-2 border-purple-500/30 bg-purple-500/5">
+      <CardHeader className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-t-lg">
+        <div className="flex items-center gap-4">
+          <div className="text-4xl">{persona.avatar_emoji}</div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <CardTitle>{persona.display_name}</CardTitle>
+              <Badge className={difficultyColor}>{persona.difficulty}</Badge>
+            </div>
+            <p className="text-purple-100">{persona.role}</p>
+          </div>
+          {isConnected && (
+            <Badge className="bg-green-500 animate-pulse">Live</Badge>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="p-6">
+        {/* Session Goals */}
+        <div className="mb-4 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
+          <p className="text-sm font-medium mb-2">Session Focus:</p>
+          <div className="flex flex-wrap gap-2">
+            {sessionConfig.focusAreas.map((area) => (
+              <Badge key={area} variant="outline">{area.replace(/_/g, ' ')}</Badge>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Difficulty: {sessionConfig.difficulty.toFixed(1)}x
+          </p>
+        </div>
+
+        {/* Voice Status */}
+        <div className="flex items-center justify-center py-8">
+          <div className={`relative ${isSpeaking ? 'animate-pulse' : ''}`}>
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center ${
+              isConnected ? 'bg-green-500' : 'bg-gray-700'
+            }`}>
+              {isConnecting ? (
+                <Loader2 className="w-10 h-10 text-white animate-spin" />
+              ) : (
+                <Mic className={`w-10 h-10 ${isConnected ? 'text-white' : 'text-gray-400'}`} />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Transcript */}
+        {transcript.length > 0 && (
+          <div className="mb-4 max-h-48 overflow-y-auto bg-black/10 rounded-lg p-3">
+            {transcript.slice(-6).map((msg, idx) => (
+              <div
+                key={idx}
+                className={`text-sm mb-2 ${
+                  msg.role === 'user' ? 'text-blue-600' : 'text-gray-700'
+                }`}
+              >
+                <span className="font-medium">
+                  {msg.role === 'user' ? 'You: ' : `${persona.display_name}: `}
+                </span>
+                {msg.content}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Controls */}
+        <div className="flex items-center justify-center gap-4">
+          {isConnected ? (
+            <Button size="lg" variant="destructive" onClick={handleEnd}>
+              End Session
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              onClick={handleStart}
+              disabled={isConnecting || !agentId}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {isConnecting ? (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <Mic className="w-5 h-5 mr-2" />
+                  Start Practice
+                </>
+              )}
+            </Button>
+          )}
+        </div>
+
+        {!agentId && (
+          <p className="text-center text-sm text-red-500 mt-4">
+            Voice coaching not configured
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ============================================================================
+// MAIN PRACTICE PAGE
+// ============================================================================
+
+export default function PracticePage() {
+  const router = useRouter();
+  const { personas, loading: personasLoading, error: personasError } = useDataWizzPersonas();
+
+  const [selectedPersona, setSelectedPersona] = useState<InvestorPersona | null>(null);
+  const [sessionConfig, setSessionConfig] = useState<SessionConfig | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [practiceMode, setPracticeMode] = useState<'select' | 'practice' | 'results'>('select');
+  const [sessionResults, setSessionResults] = useState<any>(null);
+
+  const handleSelectPersona = async (persona: InvestorPersona) => {
+    setSelectedPersona(persona);
+    setIsInitializing(true);
+
+    try {
+      const config = await initDataWizzSession(persona.persona_id, 'voice');
+      if (config) {
+        setSessionConfig(config);
+        setPracticeMode('practice');
+      } else {
+        alert('Failed to initialize session. Please try again.');
+      }
+    } catch (err) {
+      console.error('Session init error:', err);
+      alert('Failed to start practice session');
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const handleSessionEnd = (transcript: Array<{ role: string; content: string }>) => {
+    setSessionResults({ transcript, turnCount: transcript.length });
+    setPracticeMode('results');
+  };
+
+  const handleBackToSelect = () => {
+    setPracticeMode('select');
+    setSelectedPersona(null);
+    setSessionConfig(null);
+    setSessionResults(null);
+  };
+
+  // Loading state
+  if (personasLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary" />
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+        <span className="ml-3">Loading investor personas...</span>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="mb-8">
-          <Button
-            variant="ghost"
-            onClick={() => router.push('/founder/dashboard')}
-            className="mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
+        <div className="flex items-center gap-4 mb-8">
+          <Button variant="ghost" onClick={() => router.back()}>
+            <ArrowLeft className="w-5 h-5" />
           </Button>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold mb-2 flex items-center gap-2">
-                <Mic className="w-8 h-8 text-blue-600" />
-                Pitch Practice
-              </h1>
-              <p className="text-gray-600">
-                Practice your pitch with AI-simulated investors
-              </p>
-            </div>
-            {currentDeck && (
-              <div className="text-right">
-                <Badge variant="secondary">
-                  Using: {currentDeck.title}
-                </Badge>
-                <p className="text-sm text-gray-500 mt-1">
-                  Readiness: {currentDeck.readiness_score || 0}%
-                </p>
-              </div>
-            )}
+          <div>
+            <h1 className="text-2xl font-bold">Pitch Practice</h1>
+            <p className="text-gray-500">Practice with AI investor personas</p>
           </div>
         </div>
 
         {/* Persona Selection */}
         {practiceMode === 'select' && (
           <>
-            {/* Quick Stats */}
-            <div className="grid grid-cols-3 gap-4 mb-8">
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-100 rounded-lg">
-                      <Play className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">{sessionHistory.length}</p>
-                      <p className="text-sm text-gray-500">Practice Sessions</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-green-100 rounded-lg">
-                      <TrendingUp className="w-5 h-5 text-green-600" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">{currentDeck?.readiness_score || 0}%</p>
-                      <p className="text-sm text-gray-500">Pitch Readiness</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-purple-100 rounded-lg">
-                      <Clock className="w-5 h-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">5-10</p>
-                      <p className="text-sm text-gray-500">Min per session</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Persona Cards */}
-            <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Users className="w-5 h-5" />
               Choose Your Investor
             </h2>
-            <div className="grid md:grid-cols-2 gap-4 mb-8">
-              {INVESTOR_PERSONAS.map((persona) => (
+
+            {personasError && (
+              <Card className="border-yellow-300 bg-yellow-50 mb-4">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-6 h-6 text-yellow-600" />
+                    <p className="text-yellow-800">
+                      Could not load personas: {personasError}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="grid md:grid-cols-2 gap-4">
+              {personas.map((persona) => (
                 <Card
-                  key={persona.id}
-                  className={`cursor-pointer transition-all hover:shadow-lg hover:border-blue-300 ${
-                    persona.difficulty === 'hard' ? 'border-red-200' :
-                    persona.difficulty === 'medium' ? 'border-yellow-200' :
-                    'border-green-200'
-                  }`}
-                  onClick={() => startPractice(persona)}
+                  key={persona.persona_id}
+                  className={`cursor-pointer transition-all hover:shadow-lg ${
+                    persona.difficulty === 'hard' ? 'hover:border-red-400' :
+                    persona.difficulty === 'medium' ? 'hover:border-yellow-400' :
+                    'hover:border-green-400'
+                  } ${isInitializing && selectedPersona?.persona_id === persona.persona_id 
+                    ? 'ring-2 ring-purple-500' : ''}`}
+                  onClick={() => !isInitializing && handleSelectPersona(persona)}
                 >
                   <CardContent className="pt-6">
                     <div className="flex items-start gap-4">
-                      <div className="text-4xl">{persona.icon}</div>
+                      <div className="text-4xl">{persona.avatar_emoji}</div>
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-1">
-                          <h3 className="font-semibold">{persona.name}</h3>
+                          <h3 className="font-semibold">{persona.display_name}</h3>
                           <Badge
                             variant={
                               persona.difficulty === 'hard' ? 'destructive' :
@@ -280,16 +414,24 @@ export default function PitchPracticePage() {
                             {persona.difficulty}
                           </Badge>
                         </div>
-                        <p className="text-sm text-gray-500 mb-2">{persona.title}</p>
-                        <p className="text-sm font-medium text-blue-600 mb-2">{persona.style}</p>
-                        <p className="text-sm text-gray-600 mb-3">{persona.description}</p>
+                        <p className="text-sm text-gray-500 mb-2">{persona.role}</p>
+                        <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                          {persona.background_story}
+                        </p>
                         <div className="flex flex-wrap gap-1">
-                          {persona.focusAreas.map((area) => (
+                          {persona.primary_focus_areas.slice(0, 3).map((area) => (
                             <Badge key={area} variant="outline" className="text-xs">
-                              {area}
+                              {area.replace(/_/g, ' ')}
                             </Badge>
                           ))}
                         </div>
+
+                        {isInitializing && selectedPersona?.persona_id === persona.persona_id && (
+                          <div className="mt-3 flex items-center text-purple-600">
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            Preparing session...
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -297,26 +439,10 @@ export default function PitchPracticePage() {
               ))}
             </div>
 
-            {/* No deck warning */}
-            {!currentDeck && (
-              <Card className="border-yellow-300 bg-yellow-50">
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-6 h-6 text-yellow-600" />
-                    <div>
-                      <p className="font-medium text-yellow-800">No pitch deck uploaded</p>
-                      <p className="text-sm text-yellow-700">
-                        Upload a deck first to get more personalized practice feedback.
-                      </p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="ml-auto"
-                      onClick={() => router.push('/founder/upload')}
-                    >
-                      Upload Deck
-                    </Button>
-                  </div>
+            {personas.length === 0 && !personasError && (
+              <Card className="border-gray-300">
+                <CardContent className="pt-6 text-center text-gray-500">
+                  No investor personas available. Check DataWizz configuration.
                 </CardContent>
               </Card>
             )}
@@ -324,72 +450,38 @@ export default function PitchPracticePage() {
         )}
 
         {/* Practice Session */}
-        {practiceMode === 'practice' && selectedPersona && (
+        {practiceMode === 'practice' && selectedPersona && sessionConfig && (
           <div className="max-w-2xl mx-auto">
-            <Card>
-              <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-t-lg">
-                <div className="flex items-center gap-4">
-                  <div className="text-4xl">{selectedPersona.icon}</div>
-                  <div>
-                    <CardTitle>{selectedPersona.name}</CardTitle>
-                    <p className="text-blue-100">{selectedPersona.title}</p>
-                    <p className="text-sm text-blue-200">{selectedPersona.style}</p>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="p-6">
-                <VoiceInterface
-                  mode="investor_sim"
-                  context={{
-                    founderName: founderData?.name || user?.email?.split('@')[0],
-                    companyName: founderData?.company_name,
-                    deckTitle: currentDeck?.title,
-                    readinessScore: currentDeck?.readiness_score,
-                    investorPersona: selectedPersona.id,
-                    platformType: clientConfig.platformType,
-                  }}
-                  onSessionEnd={handleSessionEnd}
-                />
-
-                <div className="mt-6 flex justify-center">
-                  <Button
-                    variant="ghost"
-                    onClick={() => setPracticeMode('select')}
-                  >
-                    ← Choose Different Investor
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <DataWizzVoiceInterface
+              sessionConfig={sessionConfig}
+              persona={selectedPersona}
+              onSessionEnd={handleSessionEnd}
+            />
+            <div className="mt-4 text-center">
+              <Button variant="ghost" onClick={handleBackToSelect}>
+                ← Choose Different Investor
+              </Button>
+            </div>
           </div>
         )}
 
-        {/* Feedback View */}
-        {practiceMode === 'feedback' && (
+        {/* Results */}
+        {practiceMode === 'results' && sessionResults && (
           <div className="max-w-2xl mx-auto">
             <Card>
-              <CardContent className="pt-8 pb-6 text-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle className="w-8 h-8 text-green-600" />
-                </div>
-                <h2 className="text-2xl font-bold mb-2">Practice Complete!</h2>
-                <p className="text-gray-600 mb-6">
-                  Great job practicing with {selectedPersona?.name}.
-                  Your session has been saved for review.
+              <CardHeader>
+                <CardTitle>Session Complete</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-4">
+                  You completed {sessionResults.turnCount} exchanges with {selectedPersona?.display_name}.
                 </p>
-
-                <div className="flex justify-center gap-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setSelectedPersona(null);
-                      setPracticeMode('select');
-                    }}
-                  >
-                    Try Another Investor
+                <div className="flex gap-4">
+                  <Button onClick={handleBackToSelect}>
+                    Practice Again
                   </Button>
-                  <Button onClick={() => router.push('/founder/dashboard')}>
-                    Return to Dashboard
+                  <Button variant="outline" onClick={() => router.push('/founder/dashboard')}>
+                    Back to Dashboard
                   </Button>
                 </div>
               </CardContent>
