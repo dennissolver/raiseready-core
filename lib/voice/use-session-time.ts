@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: SessionTimeConfig = {
 
 export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
   const settings = { ...DEFAULT_CONFIG, ...config };
-
+  
   const sessionStartRef = useRef<number | null>(null);
   const currentMaxDurationRef = useRef<number>(settings.maxDurationSeconds);
   const extensionCountRef = useRef<number>(0);
@@ -66,10 +66,10 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
   const extendSession = useCallback((reason: string) => {
     currentMaxDurationRef.current += settings.extensionSeconds;
     extensionCountRef.current += 1;
-
+    
     console.log(`[SessionTime] Session extended: ${reason}`);
     console.log(`[SessionTime] New max duration: ${currentMaxDurationRef.current}s (extension #${extensionCountRef.current})`);
-
+    
     return {
       success: true,
       newMaxDuration: currentMaxDurationRef.current,
@@ -84,7 +84,7 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
         const state = getSessionState();
         const minutes = Math.floor(state.remainingSeconds / 60);
         const seconds = state.remainingSeconds % 60;
-
+        
         return {
           remaining_time: `${minutes} minutes and ${seconds} seconds`,
           remaining_seconds: state.remainingSeconds,
@@ -92,11 +92,11 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
           elapsed_minutes: Math.floor(state.elapsedSeconds / 60),
         };
       }
-
+      
       case 'extend_session': {
         const reason = parameters.reason || 'continued coaching';
         const result = extendSession(reason);
-
+        
         return {
           success: result.success,
           message: `Session extended by ${settings.extensionSeconds / 60} minutes`,
@@ -104,7 +104,7 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
           extension_count: result.extensionCount,
         };
       }
-
+      
       default:
         return { error: `Unknown tool: ${toolName}` };
     }
@@ -114,12 +114,12 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
   const endSession = useCallback(() => {
     const finalState = getSessionState();
     sessionStartRef.current = null;
-
+    
     console.log('[SessionTime] Session ended', {
       totalDuration: finalState.elapsedSeconds,
       extensions: extensionCountRef.current,
     });
-
+    
     return finalState;
   }, [getSessionState]);
 
@@ -138,27 +138,27 @@ export function useSessionTime(config: Partial<SessionTimeConfig> = {}) {
 
 /**
  * Example integration with ElevenLabs conversation widget:
- *
+ * 
  * ```tsx
  * import { useSessionTime } from '@/lib/voice/use-session-time';
- *
+ * 
  * function VoiceCoach() {
  *   const sessionTime = useSessionTime();
- *
+ *   
  *   const handleConversationStart = () => {
  *     sessionTime.startSession();
  *   };
- *
+ *   
  *   const handleConversationEnd = () => {
  *     const stats = sessionTime.endSession();
  *     // Log session stats, save to database, etc.
  *   };
- *
+ *   
  *   const handleClientToolCall = (toolName: string, params: any) => {
  *     // This gets called by ElevenLabs when the agent uses a client tool
  *     return sessionTime.handleToolCall(toolName, params);
  *   };
- *
+ *   
  *   return (
  *     <ElevenLabsWidget
  *       agentId={agentId}
