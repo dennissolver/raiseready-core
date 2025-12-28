@@ -20,7 +20,7 @@ dist/
 # Testing
 coverage/
 .nyc_output/
-
+tree.py
 # TypeScript
 *.tsbuildinfo
 
